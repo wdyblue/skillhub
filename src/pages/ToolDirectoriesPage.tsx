@@ -8,7 +8,12 @@ type Props = {
   tools: ToolConfig[];
   onDetect: () => Promise<void>;
   onSave: (tool: ToolConfig) => Promise<void>;
-  onCreateCustomTool: (request: { toolName: string; displayName: string; skillDir: string }) => Promise<void>;
+  onCreateCustomTool: (request: {
+    toolName: string;
+    displayName: string;
+    skillDir: string;
+    linkMode?: string;
+  }) => Promise<void>;
   onDeleteCustomTool: (toolName: string) => Promise<void>;
 };
 
@@ -24,6 +29,7 @@ export function ToolDirectoriesPage({
   const [customToolName, setCustomToolName] = useState("");
   const [customDisplayName, setCustomDisplayName] = useState("");
   const [customSkillDir, setCustomSkillDir] = useState("");
+  const [customLinkMode, setCustomLinkMode] = useState("auto");
 
   function getDraft(tool: ToolConfig) {
     return drafts[tool.tool_name] ?? tool;
@@ -58,11 +64,13 @@ export function ToolDirectoriesPage({
     await onCreateCustomTool({
       toolName: customToolName,
       displayName: customDisplayName,
-      skillDir: customSkillDir
+      skillDir: customSkillDir,
+      linkMode: customLinkMode
     });
     setCustomToolName("");
     setCustomDisplayName("");
     setCustomSkillDir("");
+    setCustomLinkMode("auto");
   }
 
   return (
@@ -89,6 +97,7 @@ export function ToolDirectoriesPage({
                 <th className="px-4 py-3">检测状态</th>
                 <th className="px-4 py-3">启用</th>
                 <th className="px-4 py-3">同步</th>
+                <th className="px-4 py-3">链接策略</th>
                 <th className="px-4 py-3">Skill 目录</th>
                 <th className="px-4 py-3 text-right">操作</th>
               </tr>
@@ -117,6 +126,18 @@ export function ToolDirectoriesPage({
                         checked={draft.sync_enabled}
                         onChange={(event) => updateDraft(tool, { sync_enabled: event.target.checked })}
                       />
+                    </td>
+                    <td className="px-4 py-3">
+                      <select
+                        className="filter-control"
+                        value={draft.linkMode}
+                        onChange={(event) => updateDraft(tool, { linkMode: event.target.value })}
+                      >
+                        <option value="auto">自动</option>
+                        <option value="symlink">软链接</option>
+                        <option value="junction">Junction</option>
+                        <option value="copy">复制</option>
+                      </select>
                     </td>
                     <td className="px-4 py-3">
                       <input
@@ -182,6 +203,16 @@ export function ToolDirectoriesPage({
             onChange={(event) => setCustomSkillDir(event.target.value)}
             placeholder="Skill 目录"
           />
+          <select
+            className="filter-control"
+            value={customLinkMode}
+            onChange={(event) => setCustomLinkMode(event.target.value)}
+          >
+            <option value="auto">自动</option>
+            <option value="symlink">软链接</option>
+            <option value="junction">Junction</option>
+            <option value="copy">复制</option>
+          </select>
           <button className="action-button" onClick={() => void addCustomTool()}>
             <Plus className="h-4 w-4" />
             添加

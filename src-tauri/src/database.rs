@@ -64,8 +64,8 @@ fn seed_tools(conn: &Connection) -> rusqlite::Result<()> {
     for (tool_name, display_name, skill_dir) in tools {
         conn.execute(
             "INSERT OR IGNORE INTO tools
-             (tool_name, display_name, skill_dir, detected, enabled, sync_enabled, last_checked_at, created_at, updated_at)
-             VALUES (?1, ?2, ?3, 0, 1, 1, NULL, datetime('now'), datetime('now'))",
+             (tool_name, display_name, skill_dir, detected, enabled, sync_enabled, link_mode, last_checked_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 0, 1, 1, 'auto', NULL, datetime('now'), datetime('now'))",
             params![tool_name, display_name, skill_dir],
         )?;
     }
@@ -81,6 +81,8 @@ fn migrate_database(conn: &Connection) -> rusqlite::Result<()> {
     add_column_if_missing(conn, "skills", "summary_zh", "TEXT NOT NULL DEFAULT ''")?;
     add_column_if_missing(conn, "skills", "summary_en", "TEXT NOT NULL DEFAULT ''")?;
     add_column_if_missing(conn, "skills", "primary_repo_path", "TEXT NOT NULL DEFAULT ''")?;
+    add_column_if_missing(conn, "skills", "scope", "TEXT NOT NULL DEFAULT 'global'")?;
+    add_column_if_missing(conn, "skills", "project_path", "TEXT NOT NULL DEFAULT ''")?;
     add_column_if_missing(conn, "skills", "last_used_at", "TEXT")?;
     add_column_if_missing(
         conn,
@@ -97,6 +99,44 @@ fn migrate_database(conn: &Connection) -> rusqlite::Result<()> {
     add_column_if_missing(conn, "categories", "name_en", "TEXT NOT NULL DEFAULT ''")?;
     add_column_if_missing(conn, "scan_roots", "updated_at", "TEXT")?;
     add_column_if_missing(conn, "tools", "is_custom", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(conn, "tools", "link_mode", "TEXT NOT NULL DEFAULT 'auto'")?;
+    add_column_if_missing(conn, "skill_tool_links", "link_mode", "TEXT NOT NULL DEFAULT 'auto'")?;
+    add_column_if_missing(
+        conn,
+        "marketplace_items",
+        "installed_version",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column_if_missing(
+        conn,
+        "marketplace_items",
+        "installed_hash",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column_if_missing(
+        conn,
+        "marketplace_items",
+        "installed_at",
+        "TEXT",
+    )?;
+    add_column_if_missing(
+        conn,
+        "marketplace_items",
+        "last_install_check_at",
+        "TEXT",
+    )?;
+    add_column_if_missing(
+        conn,
+        "marketplace_items",
+        "install_status",
+        "TEXT NOT NULL DEFAULT '未安装'",
+    )?;
+    add_column_if_missing(
+        conn,
+        "marketplace_items",
+        "install_message",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
     Ok(())
 }
 
@@ -143,6 +183,8 @@ CREATE TABLE IF NOT EXISTS skills (
   category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
   source TEXT NOT NULL DEFAULT '未知',
   platform TEXT NOT NULL DEFAULT '未知',
+  scope TEXT NOT NULL DEFAULT 'global',
+  project_path TEXT NOT NULL DEFAULT '',
   is_custom INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT '正常',
   quality_score INTEGER NOT NULL DEFAULT 0,
@@ -164,6 +206,7 @@ CREATE TABLE IF NOT EXISTS tools (
   enabled INTEGER NOT NULL DEFAULT 1,
   sync_enabled INTEGER NOT NULL DEFAULT 1,
   is_custom INTEGER NOT NULL DEFAULT 0,
+  link_mode TEXT NOT NULL DEFAULT 'auto',
   last_checked_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -187,6 +230,7 @@ CREATE TABLE IF NOT EXISTS skill_tool_links (
   tool_name TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 0,
   link_path TEXT NOT NULL DEFAULT '',
+  link_mode TEXT NOT NULL DEFAULT 'auto',
   link_status TEXT NOT NULL DEFAULT '未同步',
   last_synced_at TEXT,
   error_message TEXT NOT NULL DEFAULT '',
@@ -208,6 +252,45 @@ CREATE TABLE IF NOT EXISTS sync_issues (
   message TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS marketplace_sources (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL UNIQUE,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_refreshed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS marketplace_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id INTEGER NOT NULL REFERENCES marketplace_sources(id) ON DELETE CASCADE,
+  external_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  version TEXT NOT NULL DEFAULT '',
+  author TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL DEFAULT '',
+  tags TEXT NOT NULL DEFAULT '',
+  skill_url TEXT NOT NULL DEFAULT '',
+  homepage TEXT NOT NULL DEFAULT '',
+  installed_skill_id INTEGER REFERENCES skills(id) ON DELETE SET NULL,
+  installed_version TEXT NOT NULL DEFAULT '',
+  installed_hash TEXT NOT NULL DEFAULT '',
+  installed_at TEXT,
+  last_install_check_at TEXT,
+  install_status TEXT NOT NULL DEFAULT '未安装',
+  install_message TEXT NOT NULL DEFAULT '',
+  last_refreshed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(source_id, external_id)
 );
 
 CREATE TABLE IF NOT EXISTS skill_tags (
@@ -259,4 +342,5 @@ CREATE INDEX IF NOT EXISTS idx_skills_category ON skills(category_id);
 CREATE INDEX IF NOT EXISTS idx_skills_updated ON skills(updated_at);
 CREATE INDEX IF NOT EXISTS idx_skill_tool_links_skill ON skill_tool_links(skill_id);
 CREATE INDEX IF NOT EXISTS idx_sync_issues_status ON sync_issues(status);
+CREATE INDEX IF NOT EXISTS idx_marketplace_items_source ON marketplace_items(source_id);
 "#;

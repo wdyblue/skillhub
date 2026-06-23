@@ -20,6 +20,7 @@ type Props = {
     status: string,
     isCustom: boolean
   ) => Promise<void>;
+  onUpdateScope: (id: number, scope: string, projectPath?: string) => Promise<void>;
   tools: ToolConfig[];
   language: "zh" | "en";
   onToggleTool: (skillId: number, toolName: string, enabled: boolean) => Promise<void>;
@@ -43,6 +44,7 @@ export function SkillDetailPage({
   categories,
   onBack,
   onUpdated,
+  onUpdateScope,
   tools,
   language,
   onToggleTool,
@@ -52,9 +54,12 @@ export function SkillDetailPage({
   const [status, setStatus] = useState(skill.status);
   const [isCustom, setIsCustom] = useState(skill.is_custom);
   const [saving, setSaving] = useState(false);
+  const [savingScope, setSavingScope] = useState(false);
   const [syncingTool, setSyncingTool] = useState<string | null>(null);
   const [contentDraft, setContentDraft] = useState(skill.content);
   const [savingContent, setSavingContent] = useState(false);
+  const [scope, setScope] = useState(skill.scope);
+  const [projectPath, setProjectPath] = useState(skill.projectPath);
   const displayName = language === "en" ? skill.name_en || skill.name_zh || skill.name : skill.name_zh || skill.name;
   const displayDescription =
     language === "en"
@@ -67,7 +72,9 @@ export function SkillDetailPage({
 
   useEffect(() => {
     setContentDraft(skill.content);
-  }, [skill.id, skill.content]);
+    setScope(skill.scope);
+    setProjectPath(skill.projectPath);
+  }, [skill.id, skill.content, skill.scope, skill.projectPath]);
 
   async function saveMeta(nextStatus = status) {
     setSaving(true);
@@ -102,6 +109,15 @@ export function SkillDetailPage({
     }
   }
 
+  async function saveScope() {
+    setSavingScope(true);
+    try {
+      await onUpdateScope(skill.id, scope, projectPath);
+    } finally {
+      setSavingScope(false);
+    }
+  }
+
   return (
     <div className="grid grid-cols-[360px_1fr] gap-5">
       <aside className="space-y-4">
@@ -119,6 +135,7 @@ export function SkillDetailPage({
           <Info label={t.summary} value={displaySummary || t.noSummary} />
           <Info label={t.path} value={skill.path} />
           <Info label={t.source} value={`${skill.source} / ${skill.platform}`} />
+          <Info label={t.scope} value={skill.scope === "project" ? `项目 · ${skill.projectPath || "未填写"}` : "全局"} />
           <Info label={t.status} value={translateStatus(skill.status, language)} />
           <Info label={t.quality} value={`${skill.quality_score} / 100`} />
           <Info label={t.duplicateRisk} value={`${skill.duplicate_score}`} />
@@ -132,6 +149,31 @@ export function SkillDetailPage({
         <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
           <h3 className="font-semibold text-slate-950">{t.management}</h3>
           <div className="mt-4 space-y-3">
+            <label className="space-y-2">
+              <span className="text-xs font-medium text-slate-500">{t.scope}</span>
+              <select className="filter-control" value={scope} onChange={(event) => setScope(event.target.value)}>
+                <option value="global">{t.globalScope}</option>
+                <option value="project">{t.projectScope}</option>
+              </select>
+            </label>
+            {scope === "project" ? (
+              <label className="space-y-2">
+                <span className="text-xs font-medium text-slate-500">{t.projectPath}</span>
+                <input
+                  className="filter-control"
+                  value={projectPath}
+                  onChange={(event) => setProjectPath(event.target.value)}
+                  placeholder="/path/to/project"
+                />
+              </label>
+            ) : null}
+            <button
+              onClick={() => void saveScope()}
+              disabled={savingScope}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 active:scale-[0.98] disabled:opacity-60"
+            >
+              {savingScope ? t.saving : t.saveScope}
+            </button>
             <label className="space-y-2">
               <span className="text-xs font-medium text-slate-500">{t.category}</span>
               <select
@@ -315,6 +357,11 @@ const detailLabels = {
     noSummary: "暂无摘要",
     path: "路径",
     source: "来源平台",
+    scope: "作用域",
+    globalScope: "全局",
+    projectScope: "项目",
+    projectPath: "项目路径",
+    saveScope: "保存作用域",
     status: "状态",
     quality: "质量评分",
     duplicateRisk: "重复风险",
@@ -331,7 +378,7 @@ const detailLabels = {
     restore: "恢复为正常",
     archive: "归档，不删除文件",
     toolSync: "多工具启用状态",
-    toolSyncTip: "开启会在对应工具目录创建软链接；关闭只会删除软链接，不删除真实 skill 文件。",
+    toolSyncTip: "开启会按工具链接策略创建同步产物；如果工具目录本身就是主仓库，则按直连处理，不再重复建链接。",
     noTools: "请先到“工具目录”页面检测或配置工具。",
     copy: "复制 SKILL.md",
     openFolder: "打开文件夹",
@@ -352,6 +399,11 @@ const detailLabels = {
     noSummary: "No summary",
     path: "Path",
     source: "Source / Platform",
+    scope: "Scope",
+    globalScope: "Global",
+    projectScope: "Project",
+    projectPath: "Project Path",
+    saveScope: "Save Scope",
     status: "Status",
     quality: "Quality Score",
     duplicateRisk: "Duplicate Risk",
@@ -368,7 +420,7 @@ const detailLabels = {
     restore: "Restore to normal",
     archive: "Archive without deleting files",
     toolSync: "Multi-tool Enablement",
-    toolSyncTip: "Enabling creates a symlink in the target tool directory; disabling removes only the symlink.",
+    toolSyncTip: "Enabling follows the tool link strategy; if the tool directory is the primary repository, it is treated as direct access.",
     noTools: "Detect or configure tools in Tool Directories first.",
     copy: "Copy SKILL.md",
     openFolder: "Open folder",

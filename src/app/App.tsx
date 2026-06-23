@@ -15,17 +15,27 @@ import {
 } from "lucide-react";
 import {
   addScanRoot,
+  addMarketplaceSource,
+  Account,
+  AiConfig,
   Category,
   checkSyncStatus,
+  clearTranslationCache,
   createCategory,
   createCustomTool,
   createSkillInRepository,
   detectTools,
   deleteCustomTool,
   deleteCategory,
+  deleteMarketplaceSource,
+  exportSyncPackage,
   fixSyncIssues,
+  getAccount,
+  getAiConfig,
   getSkill,
   getStats,
+  loginAccount,
+  listAiModels,
   listRepositories,
   listCategories,
   listScanRoots,
@@ -35,19 +45,35 @@ import {
   removeScanRoot,
   scanAll,
   importSkillToRepository,
+  importSyncPackage,
+  installMarketplaceItem,
+  logoutAccount,
+  listMarketplaceItems,
+  listMarketplaceSources,
   saveSkillContent,
+  saveAiConfig,
   setPrimaryRepository,
   setSkillToolEnabled,
   Skill,
   SkillListFilters,
+  MarketplaceItem,
+  MarketplaceSource,
   AppStats,
   ScanRoot,
   SyncReport,
+  testAiConnection,
   toggleScanRoot,
   ToolConfig,
+  translateSkill,
+  refreshMarketplaceSource,
+  recheckMarketplaceInstallations,
+  uninstallMarketplaceItem,
+  updateMarketplaceItem,
+  syncAllEnabledTools,
   updateCategory,
   updateToolConfig,
-  updateSkillMeta
+  updateSkillMeta,
+  updateSkillScope
 } from "../lib/tauri";
 import { isTauri } from "@tauri-apps/api/core";
 import { cn } from "../lib/cn";
@@ -64,6 +90,8 @@ import { DuplicatesPage } from "../pages/DuplicatesPage";
 import { HealthPage } from "../pages/HealthPage";
 import { CustomSkillsPage } from "../pages/CustomSkillsPage";
 import { FavoritesDashboardPage } from "../pages/FavoritesDashboardPage";
+import { RemotePage } from "../pages/RemotePage";
+import { SkillToolMatrixPage } from "../pages/SkillToolMatrixPage";
 
 type PageKey =
   | "home"
@@ -72,6 +100,7 @@ type PageKey =
   | "duplicates"
   | "health"
   | "sync"
+  | "matrix"
   | "tools"
   | "repository"
   | "favorites"
@@ -91,6 +120,7 @@ const navItems: Array<{
   { key: "duplicates", label: "重复检测", icon: ShieldCheck },
   { key: "health", label: "技能体检", icon: Gauge },
   { key: "sync", label: "同步体检", icon: Stethoscope },
+  { key: "matrix", label: "工具矩阵", icon: Layers3 },
   { key: "tools", label: "工具目录", icon: Wrench },
   { key: "repository", label: "统一仓库", icon: FolderCog },
   { key: "favorites", label: "常用技能", icon: Sparkles },
@@ -113,6 +143,11 @@ export default function App() {
   const [tools, setTools] = useState<ToolConfig[]>([]);
   const [repositories, setRepositories] = useState<RepositoryConfig[]>([]);
   const [syncReport, setSyncReport] = useState<SyncReport | null>(null);
+  const [marketplaceSources, setMarketplaceSources] = useState<MarketplaceSource[]>([]);
+  const [marketplaceItems, setMarketplaceItems] = useState<MarketplaceItem[]>([]);
+  const [aiConfig, setAiConfig] = useState<AiConfig | null>(null);
+  const [account, setAccount] = useState<Account | null>(null);
+  const [translatingSkillId, setTranslatingSkillId] = useState<number | null>(null);
   const [filters, setFilters] = useState<SkillListFilters>({
     sortBy: "updated_at",
     sortOrder: "desc"
@@ -138,14 +173,29 @@ export default function App() {
   async function refreshAll(nextFilters = filters) {
     setError(null);
     try {
-      const [nextStats, nextCategories, nextSkills, nextRoots, nextTools, nextRepos] =
+      const [
+        nextStats,
+        nextCategories,
+        nextSkills,
+        nextRoots,
+        nextTools,
+        nextRepos,
+        nextAiConfig,
+        nextAccount,
+        nextMarketplaceSources,
+        nextMarketplaceItems
+      ] =
         await Promise.all([
           getStats(),
           listCategories(),
           listSkills(nextFilters),
           listScanRoots(),
           listTools().catch(() => []),
-          listRepositories().catch(() => [])
+          listRepositories().catch(() => []),
+          getAiConfig(false).catch(() => null),
+          getAccount().catch(() => null),
+          listMarketplaceSources().catch(() => []),
+          listMarketplaceItems().catch(() => [])
         ]);
       setStats(nextStats);
       setCategories(nextCategories);
@@ -153,6 +203,10 @@ export default function App() {
       setScanRoots(nextRoots);
       setTools(nextTools);
       setRepositories(nextRepos);
+      setAiConfig(nextAiConfig);
+      setAccount(nextAccount);
+      setMarketplaceSources(nextMarketplaceSources);
+      setMarketplaceItems(nextMarketplaceItems);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -261,7 +315,8 @@ export default function App() {
       toolName: tool.tool_name,
       skillDir: tool.skill_dir,
       enabled: tool.enabled,
-      syncEnabled: tool.sync_enabled
+      syncEnabled: tool.sync_enabled,
+      linkMode: tool.linkMode
     });
     await handleDetectTools();
   }
@@ -270,6 +325,7 @@ export default function App() {
     toolName: string;
     displayName: string;
     skillDir: string;
+    linkMode?: string;
   }) {
     await createCustomTool(request);
     await handleDetectTools();
@@ -320,16 +376,129 @@ export default function App() {
     }
   }
 
+  async function handleSyncAllTools() {
+    setBusyText("正在同步全部工具链接...");
+    try {
+      setSyncReport(await syncAllEnabledTools());
+      await refreshAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyText(null);
+    }
+  }
+
   async function handleSkillToolToggle(skillId: number, toolName: string, enabled: boolean) {
     await setSkillToolEnabled(skillId, toolName, enabled);
     const updated = await getSkill(skillId);
     setSkills((items) => items.map((item) => (item.id === skillId ? updated : item)));
   }
 
+  async function handleUpdateSkillScope(id: number, scope: string, projectPath?: string) {
+    await updateSkillScope({ id, scope, projectPath });
+    const updated = await getSkill(id);
+    setSkills((items) => items.map((item) => (item.id === id ? updated : item)));
+  }
+
   async function handleSaveSkillContent(skillId: number, content: string) {
     await saveSkillContent(skillId, content);
     const updated = await getSkill(skillId);
     setSkills((items) => items.map((item) => (item.id === skillId ? updated : item)));
+  }
+
+  async function handleSaveAiConfig(input: { baseUrl: string; apiKey?: string; model: string }) {
+    setAiConfig(await saveAiConfig(input));
+  }
+
+  async function handleRevealApiKey() {
+    const next = await getAiConfig(true);
+    setAiConfig(next);
+    return next;
+  }
+
+  async function handleFetchAiModels(input: { baseUrl: string; apiKey?: string; model: string }) {
+    await saveAiConfig(input);
+    const models = await listAiModels();
+    setAiConfig(await getAiConfig(false));
+    return models;
+  }
+
+  async function handleClearTranslationCache() {
+    await clearTranslationCache();
+    await refreshAll();
+  }
+
+  async function handleLogin(input: { name: string; email?: string }) {
+    setAccount(await loginAccount(input));
+  }
+
+  async function handleLogout() {
+    setAccount(await logoutAccount());
+  }
+
+  async function handleTranslateSkill(skillId: number) {
+    setTranslatingSkillId(skillId);
+    setError(null);
+    try {
+      const updated = await translateSkill(skillId, language === "zh" ? "zh" : "en");
+      setSkills((items) => items.map((item) => (item.id === skillId ? updated : item)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTranslatingSkillId(null);
+    }
+  }
+
+  async function handleAddMarketplaceSource(input: { name: string; url: string }) {
+    await addMarketplaceSource(input);
+    await refreshAll();
+  }
+
+  async function handleDeleteMarketplaceSource(id: number) {
+    await deleteMarketplaceSource(id);
+    await refreshAll();
+  }
+
+  async function handleRefreshMarketplaceSource(id: number) {
+    setMarketplaceItems(await refreshMarketplaceSource(id));
+    setMarketplaceSources(await listMarketplaceSources());
+  }
+
+  async function handleInstallMarketplaceItem(id: number) {
+    const skillId = await installMarketplaceItem(id);
+    await refreshAll();
+    setSelectedSkillId(skillId);
+  }
+
+  async function handleUpdateMarketplaceItem(id: number) {
+    const skillId = await updateMarketplaceItem(id);
+    await refreshAll();
+    setSelectedSkillId(skillId);
+  }
+
+  async function handleUninstallMarketplaceItem(id: number) {
+    await uninstallMarketplaceItem(id);
+    await refreshAll();
+  }
+
+  async function handleRecheckMarketplaceInstallations() {
+    setBusyText("正在核对 Marketplace 安装状态...");
+    try {
+      setMarketplaceItems(await recheckMarketplaceInstallations());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyText(null);
+    }
+  }
+
+  async function handleExportSyncPackage(path: string) {
+    await exportSyncPackage(path);
+  }
+
+  async function handleImportSyncPackage(path: string) {
+    await importSyncPackage(path);
+    await refreshAll();
   }
 
   function changeLanguage(next: "zh" | "en") {
@@ -462,6 +631,7 @@ export default function App() {
               categories={categories}
               onBack={() => setSelectedSkillId(null)}
               onUpdated={handleSkillUpdate}
+              onUpdateScope={handleUpdateSkillScope}
               tools={tools}
               language={language}
               onToggleTool={handleSkillToolToggle}
@@ -487,6 +657,8 @@ export default function App() {
               onSelectSkill={setSelectedSkillId}
               tools={tools}
               language={language}
+              translatingSkillId={translatingSkillId}
+              onTranslateSkill={handleTranslateSkill}
             />
           ) : activePage === "settings" ? (
             <SettingsPage
@@ -495,6 +667,15 @@ export default function App() {
               onRemoveRoot={handleRemoveRoot}
               onToggleRoot={handleToggleRoot}
               onScan={handleScan}
+              aiConfig={aiConfig}
+              account={account}
+              onSaveAiConfig={handleSaveAiConfig}
+              onRevealApiKey={handleRevealApiKey}
+              onFetchAiModels={handleFetchAiModels}
+              onTestAiConnection={testAiConnection}
+              onClearTranslationCache={handleClearTranslationCache}
+              onLogin={handleLogin}
+              onLogout={handleLogout}
             />
           ) : activePage === "tools" ? (
             <ToolDirectoriesPage
@@ -513,7 +694,32 @@ export default function App() {
               onImportSkill={handleImportSkill}
             />
           ) : activePage === "sync" ? (
-            <SyncHealthPage report={syncReport} onCheck={handleCheckSync} onFix={handleFixSync} />
+            <SyncHealthPage
+              report={syncReport}
+              onCheck={handleCheckSync}
+              onFix={handleFixSync}
+              onSyncAll={handleSyncAllTools}
+            />
+          ) : activePage === "matrix" ? (
+            <SkillToolMatrixPage
+              skills={skills}
+              tools={tools}
+              onToggleTool={handleSkillToolToggle}
+            />
+          ) : activePage === "remote" ? (
+            <RemotePage
+              sources={marketplaceSources}
+              items={marketplaceItems}
+              onAddSource={handleAddMarketplaceSource}
+              onDeleteSource={handleDeleteMarketplaceSource}
+              onRefreshSource={handleRefreshMarketplaceSource}
+              onInstallItem={handleInstallMarketplaceItem}
+              onUpdateItem={handleUpdateMarketplaceItem}
+              onUninstallItem={handleUninstallMarketplaceItem}
+              onRecheckInstallations={handleRecheckMarketplaceInstallations}
+              onExportSyncPackage={handleExportSyncPackage}
+              onImportSyncPackage={handleImportSyncPackage}
+            />
           ) : activePage === "duplicates" ? (
             <DuplicatesPage skills={skills} onSelectSkill={setSelectedSkillId} />
           ) : activePage === "health" ? (
@@ -569,6 +775,7 @@ const labels: Record<"zh" | "en", {
       duplicates: "重复检测",
       health: "技能体检",
       sync: "同步体检",
+      matrix: "工具矩阵",
       tools: "工具目录",
       repository: "统一仓库",
       favorites: "常用技能",
@@ -592,6 +799,7 @@ const labels: Record<"zh" | "en", {
       duplicates: "Duplicates",
       health: "Skill Health",
       sync: "Sync Health",
+      matrix: "Tool Matrix",
       tools: "Tool Directories",
       repository: "Unified Repository",
       favorites: "Favorites",

@@ -1,6 +1,8 @@
+mod ai;
 mod commands;
 mod database;
 mod hash;
+mod marketplace;
 mod scanner;
 mod skill_files;
 mod similarity;
@@ -10,11 +12,22 @@ use commands::{
     add_scan_root, create_category, delete_category, get_skill, get_stats, increment_usage,
     list_categories, list_scan_roots, list_skills, open_skill_file, open_skill_folder,
     remove_scan_root, scan_all, toggle_scan_root, update_category, update_skill_meta,
+    update_skill_scope,
+};
+use ai::{
+    clear_translation_cache, get_account, get_ai_config, list_ai_models, login_account, logout_account,
+    save_ai_config, test_ai_connection, translate_skill,
 };
 use sync_tools::{
     check_sync_status, create_custom_tool, delete_custom_tool, detect_tools, fix_sync_issues,
     list_repositories, list_tools, set_primary_repository, set_skill_tool_enabled,
-    update_tool_config,
+    sync_all_enabled_tools, update_tool_config,
+};
+use marketplace::{
+    add_marketplace_source, delete_marketplace_source, export_sync_package, import_sync_package,
+    install_marketplace_item, list_marketplace_items, list_marketplace_sources,
+    refresh_marketplace_source, recheck_marketplace_installations, uninstall_marketplace_item,
+    update_marketplace_item,
 };
 use skill_files::{create_skill_in_repository, import_skill_to_repository, save_skill_content};
 use database::{init_database, AppState};
@@ -49,6 +62,7 @@ pub fn run() {
             list_skills,
             get_skill,
             update_skill_meta,
+            update_skill_scope,
             increment_usage,
             open_skill_folder,
             open_skill_file,
@@ -62,9 +76,30 @@ pub fn run() {
             set_skill_tool_enabled,
             check_sync_status,
             fix_sync_issues,
+            sync_all_enabled_tools,
             create_skill_in_repository,
             import_skill_to_repository,
-            save_skill_content
+            save_skill_content,
+            get_ai_config,
+            save_ai_config,
+            list_ai_models,
+            test_ai_connection,
+            translate_skill,
+            get_account,
+            login_account,
+            logout_account,
+            clear_translation_cache,
+            list_marketplace_sources,
+            add_marketplace_source,
+            delete_marketplace_source,
+            refresh_marketplace_source,
+            list_marketplace_items,
+            install_marketplace_item,
+            update_marketplace_item,
+            uninstall_marketplace_item,
+            recheck_marketplace_installations,
+            export_sync_package,
+            import_sync_package
         ])
         .run(tauri::generate_context!())
         .expect("error while running SkillHub");

@@ -1,4 +1,4 @@
-import { Archive, Clock, FolderOpen, Star, Tags } from "lucide-react";
+import { Archive, Clock, FolderOpen, Languages, Loader2, Star, Tags } from "lucide-react";
 import { Category, Skill, SkillListFilters, ToolConfig } from "../lib/tauri";
 import { cn } from "../lib/cn";
 
@@ -11,6 +11,8 @@ type Props = {
   onSelectSkill: (id: number) => void;
   tools: ToolConfig[];
   language: "zh" | "en";
+  translatingSkillId: number | null;
+  onTranslateSkill: (id: number) => Promise<void>;
 };
 
 const statuses = [
@@ -33,7 +35,9 @@ export function SkillsPage({
   onFiltersChange,
   onSelectSkill,
   tools,
-  language
+  language,
+  translatingSkillId,
+  onTranslateSkill
 }: Props) {
   const t = skillPageLabels[language];
   return (
@@ -203,6 +207,8 @@ export function SkillsPage({
               skill={skill}
               tools={tools}
               language={language}
+              translating={translatingSkillId === skill.id}
+              onTranslate={() => onTranslateSkill(skill.id)}
               onClick={() => onSelectSkill(skill.id)}
             />
           ))}
@@ -249,11 +255,15 @@ function SkillCard({
   skill,
   tools,
   language,
+  translating,
+  onTranslate,
   onClick
 }: {
   skill: Skill;
   tools: ToolConfig[];
   language: "zh" | "en";
+  translating: boolean;
+  onTranslate: () => Promise<void>;
   onClick: () => void;
 }) {
   const scoreColor =
@@ -276,8 +286,16 @@ function SkillCard({
         : null;
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
       className="group flex min-h-64 flex-col rounded-[2rem] border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft active:scale-[0.98]"
     >
       <div className="flex items-start justify-between gap-3">
@@ -289,9 +307,23 @@ function SkillCard({
             {description || "暂无描述。"}
           </p>
         </div>
-        <span className={cn("rounded-full px-2.5 py-1 text-xs font-semibold", scoreColor)}>
-          {skill.quality_score}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            title={language === "en" ? "Translate skill" : "翻译技能"}
+            disabled={translating}
+            onClick={(event) => {
+              event.stopPropagation();
+              void onTranslate();
+            }}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500 transition hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-wait disabled:opacity-60"
+          >
+            {translating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Languages className="h-4 w-4" />}
+          </button>
+          <span className={cn("rounded-full px-2.5 py-1 text-xs font-semibold", scoreColor)}>
+            {skill.quality_score}
+          </span>
+        </div>
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
@@ -336,7 +368,7 @@ function SkillCard({
           </span>
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 

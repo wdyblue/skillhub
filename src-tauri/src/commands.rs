@@ -63,6 +63,8 @@ pub struct SkillDto {
     pub category_color: Option<String>,
     pub source: String,
     pub platform: String,
+    pub scope: String,
+    pub project_path: String,
     pub is_custom: bool,
     pub status: String,
     pub quality_score: i64,
@@ -87,11 +89,20 @@ pub struct SkillListFilters {
     pub category_id: Option<i64>,
     pub status: Option<String>,
     pub source: Option<String>,
+    pub scope: Option<String>,
     pub only_archived: Option<bool>,
     pub only_duplicate: Option<bool>,
     pub only_uncategorized: Option<bool>,
     pub sort_by: Option<String>,
     pub sort_order: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSkillScopeRequest {
+    pub id: i64,
+    pub scope: String,
+    pub project_path: Option<String>,
 }
 
 #[tauri::command]
@@ -279,6 +290,7 @@ pub fn list_skills(
         category_id: None,
         status: None,
         source: None,
+        scope: None,
         only_archived: None,
         only_duplicate: None,
         only_uncategorized: None,
@@ -289,7 +301,7 @@ pub fn list_skills(
     let mut sql = String::from(
         "SELECT s.id, s.name, s.path, s.description, s.content,
                 s.name_zh, s.name_en, s.description_zh, s.description_en, s.summary_zh, s.summary_en,
-                s.category_id, c.name, c.color, s.source, s.platform, s.is_custom, s.status,
+                s.category_id, c.name, c.color, s.source, s.platform, s.scope, s.project_path, s.is_custom, s.status,
                 s.quality_score, s.quality_reason, s.usage_count, s.duplicate_score,
                 s.archive_recommendation, s.classification_confidence,
                 s.hash, s.created_at, s.updated_at, s.last_scanned_at, s.last_used_at
@@ -336,6 +348,11 @@ pub fn list_skills(
         owned_params.push(Box::new(source));
     }
 
+    if let Some(scope) = filters.scope.filter(|value| !value.is_empty()) {
+        sql.push_str(" AND s.scope = ?");
+        owned_params.push(Box::new(scope));
+    }
+
     if filters.only_duplicate == Some(true) {
         sql.push_str(" AND s.duplicate_score > 0");
     }
@@ -374,14 +391,18 @@ pub fn list_skills(
 #[tauri::command]
 pub fn get_skill(state: State<AppState>, id: i64) -> CommandResult<SkillDto> {
     let conn = state.conn.lock().map_err(|err| err.to_string())?;
+    get_skill_by_id(&conn, id)
+}
+
+pub fn get_skill_by_id(conn: &Connection, id: i64) -> CommandResult<SkillDto> {
     let mut stmt = conn
         .prepare(
-            "SELECT s.id, s.name, s.path, s.description, s.content,
-                    s.name_zh, s.name_en, s.description_zh, s.description_en, s.summary_zh, s.summary_en,
-                    s.category_id, c.name, c.color, s.source, s.platform, s.is_custom, s.status,
-                    s.quality_score, s.quality_reason, s.usage_count, s.duplicate_score,
-                    s.archive_recommendation, s.classification_confidence,
-                    s.hash, s.created_at, s.updated_at, s.last_scanned_at, s.last_used_at
+        "SELECT s.id, s.name, s.path, s.description, s.content,
+                s.name_zh, s.name_en, s.description_zh, s.description_en, s.summary_zh, s.summary_en,
+                s.category_id, c.name, c.color, s.source, s.platform, s.scope, s.project_path, s.is_custom, s.status,
+                s.quality_score, s.quality_reason, s.usage_count, s.duplicate_score,
+                s.archive_recommendation, s.classification_confidence,
+                s.hash, s.created_at, s.updated_at, s.last_scanned_at, s.last_used_at
              FROM skills s
              LEFT JOIN categories c ON c.id = s.category_id
              WHERE s.id = ?1",
@@ -392,7 +413,7 @@ pub fn get_skill(state: State<AppState>, id: i64) -> CommandResult<SkillDto> {
         .optional()
         .map_err(|err| err.to_string())?
         .ok_or_else(|| format!("未找到 skill：{}", id))?;
-    let mut skills = attach_tags(&conn, vec![skill])?;
+    let mut skills = attach_tags(conn, vec![skill])?;
     Ok(skills.remove(0))
 }
 
@@ -409,6 +430,28 @@ pub fn update_skill_meta(
         "UPDATE skills SET category_id = ?1, status = ?2, is_custom = ?3,
          updated_at = datetime('now') WHERE id = ?4",
         params![category_id, status, if is_custom { 1 } else { 0 }, id],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_skill_scope(
+    state: State<AppState>,
+    request: UpdateSkillScopeRequest,
+) -> CommandResult<()> {
+    let scope = request.scope.trim().to_lowercase();
+    if scope != "global" && scope != "project" {
+        return Err("scope 只支持 global 或 project".to_string());
+    }
+    let project_path = request.project_path.unwrap_or_default().trim().to_string();
+    if scope == "project" && project_path.is_empty() {
+        return Err("项目级 Skill 需要提供 projectPath".to_string());
+    }
+    let conn = state.conn.lock().map_err(|err| err.to_string())?;
+    conn.execute(
+        "UPDATE skills SET scope = ?1, project_path = ?2, updated_at = datetime('now') WHERE id = ?3",
+        params![scope, project_path, request.id],
     )
     .map_err(|err| err.to_string())?;
     Ok(())
@@ -502,19 +545,21 @@ fn skill_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SkillDto> {
         category_color: row.get(13)?,
         source: row.get(14)?,
         platform: row.get(15)?,
-        is_custom: row.get::<_, i64>(16)? == 1,
-        status: row.get(17)?,
-        quality_score: row.get(18)?,
-        quality_reason: row.get(19)?,
-        usage_count: row.get(20)?,
-        duplicate_score: row.get(21)?,
-        archive_recommendation: row.get(22)?,
-        classification_confidence: row.get(23)?,
-        hash: row.get(24)?,
-        created_at: row.get(25)?,
-        updated_at: row.get(26)?,
-        last_scanned_at: row.get(27)?,
-        last_used_at: row.get(28)?,
+        scope: row.get(16)?,
+        project_path: row.get(17)?,
+        is_custom: row.get::<_, i64>(18)? == 1,
+        status: row.get(19)?,
+        quality_score: row.get(20)?,
+        quality_reason: row.get(21)?,
+        usage_count: row.get(22)?,
+        duplicate_score: row.get(23)?,
+        archive_recommendation: row.get(24)?,
+        classification_confidence: row.get(25)?,
+        hash: row.get(26)?,
+        created_at: row.get(27)?,
+        updated_at: row.get(28)?,
+        last_scanned_at: row.get(29)?,
+        last_used_at: row.get(30)?,
         tags: Vec::new(),
         tool_links: Vec::new(),
     })

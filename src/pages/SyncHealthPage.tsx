@@ -5,9 +5,10 @@ type Props = {
   report: SyncReport | null;
   onCheck: () => Promise<void>;
   onFix: () => Promise<void>;
+  onSyncAll: () => Promise<void>;
 };
 
-export function SyncHealthPage({ report, onCheck, onFix }: Props) {
+export function SyncHealthPage({ report, onCheck, onFix, onSyncAll }: Props) {
   async function confirmFix() {
     if (!report || report.needs_fix_count === 0) return;
     const ok = window.confirm(
@@ -33,11 +34,22 @@ export function SyncHealthPage({ report, onCheck, onFix }: Props) {
           <div>
             <h3 className="text-lg font-semibold text-slate-950">同步体检</h3>
             <p className="mt-2 text-sm text-slate-500">
-              检查主仓库与各工具目录之间的软链接状态。修复操作只处理软链接。
+              检查主仓库与各工具目录之间的链接状态。若工具目录本身就等于主仓库，会按“直连主仓库”跳过同步体检。
+              修复操作只处理受管链接或复制目录。
               这里不评估 skill 内容质量，内容完整性请看“技能体检”。
             </p>
           </div>
           <div className="flex gap-2">
+            <button
+              className="action-button"
+              onClick={() => {
+                const ok = window.confirm("将把所有非归档 Skill 同步到所有已启用工具目录。只创建/替换软链接，不删除真实文件。是否继续？");
+                if (ok) void onSyncAll();
+              }}
+            >
+              <Wrench className="h-4 w-4" />
+              同步全部
+            </button>
             <button className="action-button" onClick={() => void onCheck()}>
               <RefreshCw className="h-4 w-4" />
               重新检查

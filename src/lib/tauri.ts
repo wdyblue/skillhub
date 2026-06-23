@@ -58,6 +58,8 @@ export type Skill = {
   category_color: string | null;
   source: string;
   platform: string;
+  scope: string;
+  projectPath: string;
   is_custom: boolean;
   status: string;
   quality_score: number;
@@ -84,6 +86,7 @@ export type ToolConfig = {
   enabled: boolean;
   sync_enabled: boolean;
   is_custom: boolean;
+  linkMode: string;
   last_checked_at: string | null;
 };
 
@@ -93,6 +96,7 @@ export type SkillToolLink = {
   tool_name: string;
   enabled: boolean;
   link_path: string;
+  linkMode: string;
   link_status: string;
   last_synced_at: string | null;
   error_message: string;
@@ -133,11 +137,57 @@ export type SyncReport = {
   issues: SyncIssue[];
 };
 
+export type AiConfig = {
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean;
+  apiKey: string;
+};
+
+export type Account = {
+  loggedIn: boolean;
+  name: string;
+  email: string;
+  avatarInitial: string;
+};
+
+export type MarketplaceSource = {
+  id: number;
+  name: string;
+  url: string;
+  enabled: boolean;
+  lastRefreshedAt: string | null;
+};
+
+export type MarketplaceItem = {
+  id: number;
+  sourceId: number;
+  externalId: string;
+  name: string;
+  description: string;
+  version: string;
+  author: string;
+  category: string;
+  tags: string[];
+  skillUrl: string;
+  homepage: string;
+  installedSkillId: number | null;
+  installedSkillPath: string;
+  installedVersion: string;
+  installedHash: string;
+  installedAt: string | null;
+  lastInstallCheckAt: string | null;
+  installStatus: string;
+  installMessage: string;
+  isUpdateAvailable: boolean;
+};
+
 export type SkillListFilters = {
   query?: string;
   categoryId?: number | null;
   status?: string;
   source?: string;
+  scope?: string;
   onlyArchived?: boolean;
   onlyDuplicate?: boolean;
   onlyUncategorized?: boolean;
@@ -222,6 +272,10 @@ export function updateSkillMeta(
   });
 }
 
+export function updateSkillScope(request: { id: number; scope: string; projectPath?: string }) {
+  return tauriInvoke<void>("update_skill_scope", { request });
+}
+
 export function incrementUsage(id: number) {
   return tauriInvoke<void>("increment_usage", { id });
 }
@@ -247,6 +301,7 @@ export function updateToolConfig(request: {
   skillDir: string;
   enabled: boolean;
   syncEnabled: boolean;
+  linkMode?: string;
 }) {
   return tauriInvoke<void>("update_tool_config", { request });
 }
@@ -255,6 +310,7 @@ export function createCustomTool(request: {
   toolName: string;
   displayName: string;
   skillDir: string;
+  linkMode?: string;
 }) {
   return tauriInvoke<ToolConfig>("create_custom_tool", { request });
 }
@@ -287,6 +343,10 @@ export function fixSyncIssues() {
   return tauriInvoke<SyncReport>("fix_sync_issues");
 }
 
+export function syncAllEnabledTools() {
+  return tauriInvoke<SyncReport>("sync_all_enabled_tools");
+}
+
 export function createSkillInRepository(request: { name: string; description?: string }) {
   return tauriInvoke<number>("create_skill_in_repository", { request });
 }
@@ -297,4 +357,90 @@ export function importSkillToRepository(path: string) {
 
 export function saveSkillContent(skillId: number, content: string) {
   return tauriInvoke<void>("save_skill_content", { skillId, content });
+}
+
+export function getAiConfig(revealSecret = false) {
+  return tauriInvoke<AiConfig>("get_ai_config", { revealSecret });
+}
+
+export function saveAiConfig(input: {
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
+}) {
+  return tauriInvoke<AiConfig>("save_ai_config", { input });
+}
+
+export function listAiModels() {
+  return tauriInvoke<string[]>("list_ai_models");
+}
+
+export function testAiConnection() {
+  return tauriInvoke<string>("test_ai_connection");
+}
+
+export function translateSkill(skillId: number, targetLanguage: "zh" | "en") {
+  return tauriInvoke<Skill>("translate_skill", {
+    input: { skillId, targetLanguage }
+  });
+}
+
+export function clearTranslationCache() {
+  return tauriInvoke<void>("clear_translation_cache");
+}
+
+export function getAccount() {
+  return tauriInvoke<Account>("get_account");
+}
+
+export function loginAccount(input: { name: string; email?: string }) {
+  return tauriInvoke<Account>("login_account", { input });
+}
+
+export function logoutAccount() {
+  return tauriInvoke<Account>("logout_account");
+}
+
+export function listMarketplaceSources() {
+  return tauriInvoke<MarketplaceSource[]>("list_marketplace_sources");
+}
+
+export function addMarketplaceSource(input: { name: string; url: string }) {
+  return tauriInvoke<MarketplaceSource>("add_marketplace_source", { input });
+}
+
+export function deleteMarketplaceSource(id: number) {
+  return tauriInvoke<void>("delete_marketplace_source", { id });
+}
+
+export function refreshMarketplaceSource(sourceId: number) {
+  return tauriInvoke<MarketplaceItem[]>("refresh_marketplace_source", { sourceId });
+}
+
+export function listMarketplaceItems() {
+  return tauriInvoke<MarketplaceItem[]>("list_marketplace_items");
+}
+
+export function installMarketplaceItem(itemId: number) {
+  return tauriInvoke<number>("install_marketplace_item", { itemId });
+}
+
+export function updateMarketplaceItem(itemId: number) {
+  return tauriInvoke<number>("update_marketplace_item", { itemId });
+}
+
+export function uninstallMarketplaceItem(itemId: number) {
+  return tauriInvoke<void>("uninstall_marketplace_item", { itemId });
+}
+
+export function recheckMarketplaceInstallations() {
+  return tauriInvoke<MarketplaceItem[]>("recheck_marketplace_installations");
+}
+
+export function exportSyncPackage(path: string) {
+  return tauriInvoke<void>("export_sync_package", { path });
+}
+
+export function importSyncPackage(path: string) {
+  return tauriInvoke<void>("import_sync_package", { path });
 }
