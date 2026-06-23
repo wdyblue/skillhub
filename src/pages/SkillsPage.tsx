@@ -1,13 +1,23 @@
-import { Archive, Clock, FolderOpen, Languages, Loader2, Star, Tags } from "lucide-react";
-import { Category, Skill, SkillListFilters, ToolConfig } from "../lib/tauri";
+import { Archive, CheckCheck, Clock, FolderOpen, Languages, Loader2, Square, Star, Tags } from "lucide-react";
+import { useState } from "react";
+import { Category, Skill, SkillListFilters, Tag, ToolConfig } from "../lib/tauri";
 import { cn } from "../lib/cn";
 
 type Props = {
   loading: boolean;
   skills: Skill[];
   categories: Category[];
+  tags: Tag[];
   filters: SkillListFilters;
   onFiltersChange: (filters: SkillListFilters) => void;
+  onBatchUpdate: (request: {
+    skillIds: number[];
+    categoryId?: number | null;
+    status?: string;
+    isCustom?: boolean;
+    scope?: string;
+    projectPath?: string;
+  }) => Promise<void>;
   onSelectSkill: (id: number) => void;
   tools: ToolConfig[];
   language: "zh" | "en";
@@ -31,8 +41,10 @@ export function SkillsPage({
   loading,
   skills,
   categories,
+  tags,
   filters,
   onFiltersChange,
+  onBatchUpdate,
   onSelectSkill,
   tools,
   language,
@@ -40,10 +52,37 @@ export function SkillsPage({
   onTranslateSkill
 }: Props) {
   const t = skillPageLabels[language];
+  const [selectedSkillIds, setSelectedSkillIds] = useState<number[]>([]);
+  const [groupBy, setGroupBy] = useState<"none" | "category" | "source" | "scope" | "status">("none");
+
+  const groupedSkills = groupSkills(skills, groupBy, language);
+
+  const selectedCount = selectedSkillIds.length;
+  const effectiveSelectedIds = selectedCount > 0 ? selectedSkillIds : skills.map((skill) => skill.id);
+
+  async function runBatch(action: "archive" | "restore" | "custom" | "uncustom" | "global" | "project") {
+    const request = {
+      skillIds: effectiveSelectedIds
+    } as Parameters<Props["onBatchUpdate"]>[0];
+    if (action === "archive") request.status = "已归档";
+    if (action === "restore") request.status = "正常";
+    if (action === "custom") request.isCustom = true;
+    if (action === "uncustom") request.isCustom = false;
+    if (action === "global") request.scope = "global";
+    if (action === "project") {
+      const projectPath = window.prompt("请输入项目路径，例如 /Users/admin/Documents/project");
+      if (!projectPath?.trim()) return;
+      request.scope = "project";
+      request.projectPath = projectPath.trim();
+    }
+    await onBatchUpdate(request);
+    setSelectedSkillIds([]);
+  }
+
   return (
     <div className="space-y-5">
       <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-6 gap-3">
+        <div className="grid grid-cols-8 gap-3">
           <FilterBlock label={t.category}>
             <select
               value={filters.categoryId ?? ""}
@@ -101,6 +140,35 @@ export function SkillsPage({
               <option value="未知">未知</option>
             </select>
           </FilterBlock>
+          <FilterBlock label={t.scope}>
+            <select
+              value={filters.scope ?? ""}
+              onChange={(event) =>
+                onFiltersChange({ ...filters, scope: event.target.value || undefined })
+              }
+              className="filter-control"
+            >
+              <option value="">{t.allScopes}</option>
+              <option value="global">{t.globalScope}</option>
+              <option value="project">{t.projectScope}</option>
+            </select>
+          </FilterBlock>
+          <FilterBlock label={t.tag}>
+            <select
+              value={filters.tag ?? ""}
+              onChange={(event) =>
+                onFiltersChange({ ...filters, tag: event.target.value || undefined })
+              }
+              className="filter-control"
+            >
+              <option value="">{t.allTags}</option>
+              {tags.map((tag) => (
+                <option key={tag.id} value={tag.name}>
+                  {tag.name} ({tag.skill_count})
+                </option>
+              ))}
+            </select>
+          </FilterBlock>
           <FilterBlock label={t.sort}>
             <select
               value={filters.sortBy ?? "updated_at"}
@@ -143,6 +211,19 @@ export function SkillsPage({
               {t.reset}
             </button>
           </div>
+          <FilterBlock label={t.groupBy}>
+            <select
+              value={groupBy}
+              onChange={(event) => setGroupBy(event.target.value as typeof groupBy)}
+              className="filter-control"
+            >
+              <option value="none">{t.noGroup}</option>
+              <option value="category">{t.category}</option>
+              <option value="source">{t.source}</option>
+              <option value="scope">{t.scope}</option>
+              <option value="status">{t.status}</option>
+            </select>
+          </FilterBlock>
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
@@ -181,6 +262,39 @@ export function SkillsPage({
             {t.onlyArchived}
           </ToggleChip>
         </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-2xl bg-slate-50 p-3">
+          <button className="action-button" onClick={() => setSelectedSkillIds(skills.map((skill) => skill.id))}>
+            <CheckCheck className="h-4 w-4" />
+            {t.selectAll}
+          </button>
+          <button className="action-button" onClick={() => setSelectedSkillIds([])}>
+            <Square className="h-4 w-4" />
+            {t.clearSelection}
+          </button>
+          <button className="action-button" onClick={() => void runBatch("archive")}>
+            <Archive className="h-4 w-4" />
+            {t.batchArchive}
+          </button>
+          <button className="action-button" onClick={() => void runBatch("restore")}>
+            {t.batchRestore}
+          </button>
+          <button className="action-button" onClick={() => void runBatch("custom")}>
+            {t.batchCustom}
+          </button>
+          <button className="action-button" onClick={() => void runBatch("uncustom")}>
+            {t.batchUncustom}
+          </button>
+          <button className="action-button" onClick={() => void runBatch("global")}>
+            {t.batchGlobal}
+          </button>
+          <button className="action-button" onClick={() => void runBatch("project")}>
+            {t.batchProject}
+          </button>
+          <span className="ml-auto text-xs font-medium text-slate-500">
+            {selectedCount > 0 ? `${t.selected} ${selectedCount}` : t.batchHint}
+          </span>
+        </div>
       </div>
 
       {loading ? (
@@ -200,17 +314,37 @@ export function SkillsPage({
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-4">
-          {skills.map((skill) => (
-            <SkillCard
-              key={skill.id}
-              skill={skill}
-              tools={tools}
-              language={language}
-              translating={translatingSkillId === skill.id}
-              onTranslate={() => onTranslateSkill(skill.id)}
-              onClick={() => onSelectSkill(skill.id)}
-            />
+        <div className="space-y-6">
+          {groupedSkills.map((group) => (
+            <div key={group.key} className="space-y-3">
+              {groupBy !== "none" ? (
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">{group.label}</h3>
+                  <span className="text-xs text-slate-400">{group.items.length} skills</span>
+                </div>
+              ) : null}
+              <div className="grid grid-cols-3 gap-4">
+                {group.items.map((skill) => (
+                  <SkillCard
+                    key={skill.id}
+                    skill={skill}
+                    tools={tools}
+                    language={language}
+                    translating={translatingSkillId === skill.id}
+                    selected={selectedSkillIds.includes(skill.id)}
+                    onSelectToggle={(checked) =>
+                      setSelectedSkillIds((items) =>
+                        checked
+                          ? [...new Set([...items, skill.id])]
+                          : items.filter((item) => item !== skill.id)
+                      )
+                    }
+                    onTranslate={() => onTranslateSkill(skill.id)}
+                    onClick={() => onSelectSkill(skill.id)}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -256,6 +390,8 @@ function SkillCard({
   tools,
   language,
   translating,
+  selected,
+  onSelectToggle,
   onTranslate,
   onClick
 }: {
@@ -263,6 +399,8 @@ function SkillCard({
   tools: ToolConfig[];
   language: "zh" | "en";
   translating: boolean;
+  selected: boolean;
+  onSelectToggle: (checked: boolean) => void;
   onTranslate: () => Promise<void>;
   onClick: () => void;
 }) {
@@ -298,6 +436,13 @@ function SkillCard({
       }}
       className="group flex min-h-64 flex-col rounded-[2rem] border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft active:scale-[0.98]"
     >
+      <label
+        className="mb-3 flex items-center gap-2 text-xs font-medium text-slate-500"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <input type="checkbox" checked={selected} onChange={(event) => onSelectToggle(event.target.checked)} />
+        {selected ? "已选中" : "加入批量"}
+      </label>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="line-clamp-2 text-lg font-semibold tracking-tight text-slate-950">
@@ -380,6 +525,12 @@ const skillPageLabels = {
     allStatuses: "全部状态",
     source: "来源平台",
     allSources: "全部来源",
+    scope: "作用域",
+    allScopes: "全部作用域",
+    globalScope: "全局",
+    projectScope: "项目",
+    tag: "标签",
+    allTags: "全部标签",
     sort: "排序",
     updatedAt: "修改时间",
     qualityScore: "质量评分",
@@ -389,6 +540,18 @@ const skillPageLabels = {
     desc: "降序",
     asc: "升序",
     reset: "重置筛选",
+    groupBy: "分组",
+    noGroup: "不分组",
+    selectAll: "全选当前结果",
+    clearSelection: "清空选择",
+    batchArchive: "批量归档",
+    batchRestore: "批量恢复",
+    batchCustom: "批量标记自建",
+    batchUncustom: "取消自建",
+    batchGlobal: "设为全局",
+    batchProject: "设为项目级",
+    selected: "已选择",
+    batchHint: "不选时默认作用于当前筛选结果",
     onlyUncategorized: "只看未分类",
     onlyDuplicate: "只看疑似重复",
     onlyArchived: "只看已归档",
@@ -402,6 +565,12 @@ const skillPageLabels = {
     allStatuses: "All statuses",
     source: "Source",
     allSources: "All sources",
+    scope: "Scope",
+    allScopes: "All scopes",
+    globalScope: "Global",
+    projectScope: "Project",
+    tag: "Tag",
+    allTags: "All tags",
     sort: "Sort",
     updatedAt: "Updated time",
     qualityScore: "Quality score",
@@ -411,6 +580,18 @@ const skillPageLabels = {
     desc: "Descending",
     asc: "Ascending",
     reset: "Reset filters",
+    groupBy: "Group by",
+    noGroup: "No grouping",
+    selectAll: "Select all results",
+    clearSelection: "Clear selection",
+    batchArchive: "Archive batch",
+    batchRestore: "Restore batch",
+    batchCustom: "Mark custom",
+    batchUncustom: "Unmark custom",
+    batchGlobal: "Set global",
+    batchProject: "Set project",
+    selected: "Selected",
+    batchHint: "If none selected, apply to current filtered results",
     onlyUncategorized: "Only uncategorized",
     onlyDuplicate: "Only possible duplicates",
     onlyArchived: "Only archived",
@@ -479,6 +660,31 @@ const categoryMap: Record<string, string> = {
 
 function availableTools(tools: ToolConfig[]) {
   return tools.filter((tool) => tool.detected && tool.enabled && tool.sync_enabled);
+}
+
+function groupSkills(skills: Skill[], groupBy: "none" | "category" | "source" | "scope" | "status", language: "zh" | "en") {
+  if (groupBy === "none") {
+    return [{ key: "all", label: "All", items: skills }];
+  }
+  const map = new Map<string, Skill[]>();
+  for (const skill of skills) {
+    const key =
+      groupBy === "category"
+        ? skill.category_name || (language === "en" ? "Uncategorized" : "未分类")
+        : groupBy === "source"
+          ? skill.source
+          : groupBy === "scope"
+            ? skill.scope === "project"
+              ? language === "en"
+                ? "Project"
+                : "项目"
+              : language === "en"
+                ? "Global"
+                : "全局"
+            : translateStatus(skill.status, language);
+    map.set(key, [...(map.get(key) ?? []), skill]);
+  }
+  return Array.from(map.entries()).map(([key, items]) => ({ key, label: key, items }));
 }
 
 function Badge({

@@ -18,9 +18,11 @@ import {
   addMarketplaceSource,
   Account,
   AiConfig,
+  batchUpdateSkills,
   Category,
   checkSyncStatus,
   clearTranslationCache,
+  CloudSyncConfig,
   createCategory,
   createCustomTool,
   createSkillInRepository,
@@ -32,6 +34,7 @@ import {
   fixSyncIssues,
   getAccount,
   getAiConfig,
+  getCloudSyncConfig,
   getSkill,
   getStats,
   loginAccount,
@@ -40,6 +43,7 @@ import {
   listCategories,
   listScanRoots,
   listSkills,
+  listTags,
   listTools,
   RepositoryConfig,
   removeScanRoot,
@@ -61,6 +65,7 @@ import {
   AppStats,
   ScanRoot,
   SyncReport,
+  Tag,
   testAiConnection,
   toggleScanRoot,
   ToolConfig,
@@ -69,11 +74,15 @@ import {
   recheckMarketplaceInstallations,
   uninstallMarketplaceItem,
   updateMarketplaceItem,
+  updateSkillTags,
   syncAllEnabledTools,
   updateCategory,
   updateToolConfig,
   updateSkillMeta,
-  updateSkillScope
+  updateSkillScope,
+  pushSyncPackageToCloud,
+  pullSyncPackageFromCloud,
+  saveCloudSyncConfig
 } from "../lib/tauri";
 import { isTauri } from "@tauri-apps/api/core";
 import { cn } from "../lib/cn";
@@ -138,6 +147,7 @@ export default function App() {
   const [selectedSkillId, setSelectedSkillId] = useState<number | null>(null);
   const [stats, setStats] = useState<AppStats | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [scanRoots, setScanRoots] = useState<ScanRoot[]>([]);
   const [tools, setTools] = useState<ToolConfig[]>([]);
@@ -145,6 +155,7 @@ export default function App() {
   const [syncReport, setSyncReport] = useState<SyncReport | null>(null);
   const [marketplaceSources, setMarketplaceSources] = useState<MarketplaceSource[]>([]);
   const [marketplaceItems, setMarketplaceItems] = useState<MarketplaceItem[]>([]);
+  const [cloudSyncConfig, setCloudSyncConfig] = useState<CloudSyncConfig | null>(null);
   const [aiConfig, setAiConfig] = useState<AiConfig | null>(null);
   const [account, setAccount] = useState<Account | null>(null);
   const [translatingSkillId, setTranslatingSkillId] = useState<number | null>(null);
@@ -176,6 +187,7 @@ export default function App() {
       const [
         nextStats,
         nextCategories,
+        nextTags,
         nextSkills,
         nextRoots,
         nextTools,
@@ -183,11 +195,13 @@ export default function App() {
         nextAiConfig,
         nextAccount,
         nextMarketplaceSources,
-        nextMarketplaceItems
+        nextMarketplaceItems,
+        nextCloudSyncConfig
       ] =
         await Promise.all([
           getStats(),
           listCategories(),
+          listTags().catch(() => []),
           listSkills(nextFilters),
           listScanRoots(),
           listTools().catch(() => []),
@@ -195,10 +209,12 @@ export default function App() {
           getAiConfig(false).catch(() => null),
           getAccount().catch(() => null),
           listMarketplaceSources().catch(() => []),
-          listMarketplaceItems().catch(() => [])
+          listMarketplaceItems().catch(() => []),
+          getCloudSyncConfig().catch(() => null)
         ]);
       setStats(nextStats);
       setCategories(nextCategories);
+      setTags(nextTags);
       setSkills(nextSkills);
       setScanRoots(nextRoots);
       setTools(nextTools);
@@ -207,6 +223,7 @@ export default function App() {
       setAccount(nextAccount);
       setMarketplaceSources(nextMarketplaceSources);
       setMarketplaceItems(nextMarketplaceItems);
+      setCloudSyncConfig(nextCloudSyncConfig);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -400,6 +417,32 @@ export default function App() {
     setSkills((items) => items.map((item) => (item.id === id ? updated : item)));
   }
 
+  async function handleUpdateSkillTags(id: number, nextTags: string[]) {
+    await updateSkillTags({ skillId: id, tags: nextTags });
+    await refreshAll();
+    const updated = await getSkill(id);
+    setSkills((items) => items.map((item) => (item.id === id ? updated : item)));
+  }
+
+  async function handleBatchUpdateSkills(request: {
+    skillIds: number[];
+    categoryId?: number | null;
+    status?: string;
+    isCustom?: boolean;
+    scope?: string;
+    projectPath?: string;
+  }) {
+    setBusyText("正在批量更新技能...");
+    try {
+      await batchUpdateSkills(request);
+      await refreshAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyText(null);
+    }
+  }
+
   async function handleSaveSkillContent(skillId: number, content: string) {
     await saveSkillContent(skillId, content);
     const updated = await getSkill(skillId);
@@ -499,6 +542,34 @@ export default function App() {
   async function handleImportSyncPackage(path: string) {
     await importSyncPackage(path);
     await refreshAll();
+  }
+
+  async function handleSaveCloudSyncConfig(input: { gistId: string; token?: string }) {
+    setCloudSyncConfig(await saveCloudSyncConfig(input));
+  }
+
+  async function handlePushSyncPackageToCloud() {
+    setBusyText("正在上传云同步包...");
+    try {
+      await pushSyncPackageToCloud();
+      setCloudSyncConfig(await getCloudSyncConfig());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyText(null);
+    }
+  }
+
+  async function handlePullSyncPackageFromCloud() {
+    setBusyText("正在下载云同步包...");
+    try {
+      await pullSyncPackageFromCloud();
+      await refreshAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyText(null);
+    }
   }
 
   function changeLanguage(next: "zh" | "en") {
@@ -629,9 +700,11 @@ export default function App() {
             <SkillDetailPage
               skill={selectedSkill}
               categories={categories}
+              tags={tags}
               onBack={() => setSelectedSkillId(null)}
               onUpdated={handleSkillUpdate}
               onUpdateScope={handleUpdateSkillScope}
+              onUpdateTags={handleUpdateSkillTags}
               tools={tools}
               language={language}
               onToggleTool={handleSkillToolToggle}
@@ -652,8 +725,10 @@ export default function App() {
               loading={loading}
               skills={skills}
               categories={categories}
+              tags={tags}
               filters={filters}
               onFiltersChange={handleFiltersChange}
+              onBatchUpdate={handleBatchUpdateSkills}
               onSelectSkill={setSelectedSkillId}
               tools={tools}
               language={language}
@@ -710,6 +785,7 @@ export default function App() {
             <RemotePage
               sources={marketplaceSources}
               items={marketplaceItems}
+              cloudSyncConfig={cloudSyncConfig}
               onAddSource={handleAddMarketplaceSource}
               onDeleteSource={handleDeleteMarketplaceSource}
               onRefreshSource={handleRefreshMarketplaceSource}
@@ -719,6 +795,9 @@ export default function App() {
               onRecheckInstallations={handleRecheckMarketplaceInstallations}
               onExportSyncPackage={handleExportSyncPackage}
               onImportSyncPackage={handleImportSyncPackage}
+              onSaveCloudSyncConfig={handleSaveCloudSyncConfig}
+              onPushCloudSync={handlePushSyncPackageToCloud}
+              onPullCloudSync={handlePullSyncPackageFromCloud}
             />
           ) : activePage === "duplicates" ? (
             <DuplicatesPage skills={skills} onSelectSkill={setSelectedSkillId} />

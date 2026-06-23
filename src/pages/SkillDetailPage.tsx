@@ -7,12 +7,14 @@ import {
   openSkillFile,
   openSkillFolder,
   Skill,
+  Tag,
   ToolConfig
 } from "../lib/tauri";
 
 type Props = {
   skill: Skill;
   categories: Category[];
+  tags: Tag[];
   onBack: () => void;
   onUpdated: (
     id: number,
@@ -21,6 +23,7 @@ type Props = {
     isCustom: boolean
   ) => Promise<void>;
   onUpdateScope: (id: number, scope: string, projectPath?: string) => Promise<void>;
+  onUpdateTags: (id: number, tags: string[]) => Promise<void>;
   tools: ToolConfig[];
   language: "zh" | "en";
   onToggleTool: (skillId: number, toolName: string, enabled: boolean) => Promise<void>;
@@ -42,9 +45,11 @@ const statuses = [
 export function SkillDetailPage({
   skill,
   categories,
+  tags,
   onBack,
   onUpdated,
   onUpdateScope,
+  onUpdateTags,
   tools,
   language,
   onToggleTool,
@@ -55,11 +60,13 @@ export function SkillDetailPage({
   const [isCustom, setIsCustom] = useState(skill.is_custom);
   const [saving, setSaving] = useState(false);
   const [savingScope, setSavingScope] = useState(false);
+  const [savingTags, setSavingTags] = useState(false);
   const [syncingTool, setSyncingTool] = useState<string | null>(null);
   const [contentDraft, setContentDraft] = useState(skill.content);
   const [savingContent, setSavingContent] = useState(false);
   const [scope, setScope] = useState(skill.scope);
   const [projectPath, setProjectPath] = useState(skill.projectPath);
+  const [tagDraft, setTagDraft] = useState(skill.tags.join(", "));
   const displayName = language === "en" ? skill.name_en || skill.name_zh || skill.name : skill.name_zh || skill.name;
   const displayDescription =
     language === "en"
@@ -74,7 +81,8 @@ export function SkillDetailPage({
     setContentDraft(skill.content);
     setScope(skill.scope);
     setProjectPath(skill.projectPath);
-  }, [skill.id, skill.content, skill.scope, skill.projectPath]);
+    setTagDraft(skill.tags.join(", "));
+  }, [skill.id, skill.content, skill.scope, skill.projectPath, skill.tags]);
 
   async function saveMeta(nextStatus = status) {
     setSaving(true);
@@ -115,6 +123,19 @@ export function SkillDetailPage({
       await onUpdateScope(skill.id, scope, projectPath);
     } finally {
       setSavingScope(false);
+    }
+  }
+
+  async function saveTags() {
+    setSavingTags(true);
+    try {
+      const nextTags = tagDraft
+        .split(/[,\n，]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      await onUpdateTags(skill.id, nextTags);
+    } finally {
+      setSavingTags(false);
     }
   }
 
@@ -173,6 +194,36 @@ export function SkillDetailPage({
               className="flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 active:scale-[0.98] disabled:opacity-60"
             >
               {savingScope ? t.saving : t.saveScope}
+            </button>
+            <label className="space-y-2">
+              <span className="text-xs font-medium text-slate-500">{t.tags}</span>
+              <input
+                className="filter-control"
+                value={tagDraft}
+                onChange={(event) => setTagDraft(event.target.value)}
+                placeholder={t.tagsPlaceholder}
+                list="skillhub-tag-options"
+              />
+              <datalist id="skillhub-tag-options">
+                {tags.map((tag) => (
+                  <option key={tag.id} value={tag.name} />
+                ))}
+              </datalist>
+              <div className="flex flex-wrap gap-2">
+                {skill.tags.map((tag) => (
+                  <span key={tag} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </label>
+            <button
+              onClick={() => void saveTags()}
+              disabled={savingTags}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 active:scale-[0.98] disabled:opacity-60"
+            >
+              <Save className="h-4 w-4" />
+              {savingTags ? t.saving : t.saveTags}
             </button>
             <label className="space-y-2">
               <span className="text-xs font-medium text-slate-500">{t.category}</span>
@@ -361,7 +412,10 @@ const detailLabels = {
     globalScope: "全局",
     projectScope: "项目",
     projectPath: "项目路径",
+    tags: "标签",
+    tagsPlaceholder: "例如：前端, 自动化, RAG",
     saveScope: "保存作用域",
+    saveTags: "保存标签",
     status: "状态",
     quality: "质量评分",
     duplicateRisk: "重复风险",
@@ -403,7 +457,10 @@ const detailLabels = {
     globalScope: "Global",
     projectScope: "Project",
     projectPath: "Project Path",
+    tags: "Tags",
+    tagsPlaceholder: "For example: frontend, automation, RAG",
     saveScope: "Save Scope",
+    saveTags: "Save Tags",
     status: "Status",
     quality: "Quality Score",
     duplicateRisk: "Duplicate Risk",

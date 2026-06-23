@@ -10,9 +10,9 @@ mod sync_tools;
 
 use commands::{
     add_scan_root, create_category, delete_category, get_skill, get_stats, increment_usage,
-    list_categories, list_scan_roots, list_skills, open_skill_file, open_skill_folder,
+    list_categories, list_scan_roots, list_skills, list_tags, open_skill_file, open_skill_folder,
     remove_scan_root, scan_all, toggle_scan_root, update_category, update_skill_meta,
-    update_skill_scope,
+    update_skill_scope, update_skill_tags, batch_update_skills,
 };
 use ai::{
     clear_translation_cache, get_account, get_ai_config, list_ai_models, login_account, logout_account,
@@ -25,6 +25,7 @@ use sync_tools::{
 };
 use marketplace::{
     add_marketplace_source, delete_marketplace_source, export_sync_package, import_sync_package,
+    get_cloud_sync_config, save_cloud_sync_config, push_sync_package_to_cloud, pull_sync_package_from_cloud,
     install_marketplace_item, list_marketplace_items, list_marketplace_sources,
     refresh_marketplace_source, recheck_marketplace_installations, uninstall_marketplace_item,
     update_marketplace_item,
@@ -60,9 +61,12 @@ pub fn run() {
             toggle_scan_root,
             scan_all,
             list_skills,
+            list_tags,
             get_skill,
             update_skill_meta,
             update_skill_scope,
+            update_skill_tags,
+            batch_update_skills,
             increment_usage,
             open_skill_folder,
             open_skill_file,
@@ -99,7 +103,11 @@ pub fn run() {
             uninstall_marketplace_item,
             recheck_marketplace_installations,
             export_sync_package,
-            import_sync_package
+            import_sync_package,
+            get_cloud_sync_config,
+            save_cloud_sync_config,
+            push_sync_package_to_cloud,
+            pull_sync_package_from_cloud
         ])
         .run(tauri::generate_context!())
         .expect("error while running SkillHub");

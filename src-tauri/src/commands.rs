@@ -27,6 +27,14 @@ pub struct CategoryDto {
     pub parent_id: Option<i64>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagDto {
+    pub id: i64,
+    pub name: String,
+    pub skill_count: i64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CategoryInput {
@@ -87,6 +95,7 @@ pub struct SkillDto {
 pub struct SkillListFilters {
     pub query: Option<String>,
     pub category_id: Option<i64>,
+    pub tag: Option<String>,
     pub status: Option<String>,
     pub source: Option<String>,
     pub scope: Option<String>,
@@ -102,6 +111,24 @@ pub struct SkillListFilters {
 pub struct UpdateSkillScopeRequest {
     pub id: i64,
     pub scope: String,
+    pub project_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSkillTagsRequest {
+    pub skill_id: i64,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchUpdateSkillsRequest {
+    pub skill_ids: Vec<i64>,
+    pub category_id: Option<i64>,
+    pub status: Option<String>,
+    pub is_custom: Option<bool>,
+    pub scope: Option<String>,
     pub project_path: Option<String>,
 }
 
@@ -141,6 +168,32 @@ pub fn list_categories(state: State<AppState>) -> CommandResult<Vec<CategoryDto>
             .map_err(|err| err.to_string())?;
         collected
     };
+    Ok(rows)
+}
+
+#[tauri::command]
+pub fn list_tags(state: State<AppState>) -> CommandResult<Vec<TagDto>> {
+    let conn = state.conn.lock().map_err(|err| err.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT t.id, t.name, COUNT(st.skill_id) AS skill_count
+             FROM tags t
+             LEFT JOIN skill_tags st ON st.tag_id = t.id
+             GROUP BY t.id, t.name
+             ORDER BY skill_count DESC, t.name COLLATE NOCASE ASC",
+        )
+        .map_err(|err| err.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(TagDto {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                skill_count: row.get(2)?,
+            })
+        })
+        .map_err(|err| err.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|err| err.to_string())?;
     Ok(rows)
 }
 
@@ -288,6 +341,7 @@ pub fn list_skills(
     let filters = filters.unwrap_or(SkillListFilters {
         query: None,
         category_id: None,
+        tag: None,
         status: None,
         source: None,
         scope: None,
@@ -334,6 +388,17 @@ pub fn list_skills(
     if let Some(category_id) = filters.category_id {
         sql.push_str(" AND s.category_id = ?");
         owned_params.push(Box::new(category_id));
+    }
+
+    if let Some(tag) = filters.tag.filter(|value| !value.trim().is_empty()) {
+        sql.push_str(
+            " AND EXISTS (
+                SELECT 1 FROM skill_tags st
+                INNER JOIN tags t ON t.id = st.tag_id
+                WHERE st.skill_id = s.id AND t.name = ?
+            )",
+        );
+        owned_params.push(Box::new(tag));
     }
 
     if let Some(status) = filters.status.filter(|value| !value.is_empty()) {
@@ -454,6 +519,94 @@ pub fn update_skill_scope(
         params![scope, project_path, request.id],
     )
     .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_skill_tags(
+    state: State<AppState>,
+    request: UpdateSkillTagsRequest,
+) -> CommandResult<()> {
+    let conn = state.conn.lock().map_err(|err| err.to_string())?;
+    replace_skill_tags(&conn, request.skill_id, &request.tags)?;
+    conn.execute(
+        "UPDATE skills SET updated_at = datetime('now') WHERE id = ?1",
+        params![request.skill_id],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn batch_update_skills(
+    state: State<AppState>,
+    request: BatchUpdateSkillsRequest,
+) -> CommandResult<()> {
+    if request.skill_ids.is_empty() {
+        return Ok(());
+    }
+    let scope = request.scope.as_ref().map(|item| item.trim().to_lowercase());
+    if let Some(scope) = scope.as_deref() {
+        if scope != "global" && scope != "project" {
+            return Err("scope 只支持 global 或 project".to_string());
+        }
+        if scope == "project"
+            && request
+                .project_path
+                .as_ref()
+                .map(|item| item.trim().is_empty())
+                .unwrap_or(true)
+        {
+            return Err("项目级批量操作需要提供 projectPath".to_string());
+        }
+    }
+
+    let conn = state.conn.lock().map_err(|err| err.to_string())?;
+    for skill_id in request.skill_ids {
+        let category_id = request.category_id;
+        let status = request.status.clone();
+        let is_custom = request.is_custom;
+        let scope = scope.clone();
+        let project_path = request.project_path.clone().unwrap_or_default();
+
+        let (current_category_id, current_status, current_is_custom, current_scope, current_project_path): (
+            Option<i64>,
+            String,
+            i64,
+            String,
+            String,
+        ) = conn
+            .query_row(
+                "SELECT category_id, status, is_custom, scope, project_path FROM skills WHERE id = ?1",
+                params![skill_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .map_err(|err| err.to_string())?;
+
+        conn.execute(
+            "UPDATE skills
+             SET category_id = ?1,
+                 status = ?2,
+                 is_custom = ?3,
+                 scope = ?4,
+                 project_path = ?5,
+                 updated_at = datetime('now')
+             WHERE id = ?6",
+            params![
+                category_id.or(current_category_id),
+                status.unwrap_or(current_status),
+                if is_custom.unwrap_or(current_is_custom == 1) { 1 } else { 0 },
+                scope.unwrap_or(current_scope),
+                if request.scope.is_some() {
+                    project_path
+                } else {
+                    current_project_path
+                },
+                skill_id
+            ],
+        )
+        .map_err(|err| err.to_string())?;
+    }
     Ok(())
 }
 
@@ -585,6 +738,47 @@ fn attach_tags(conn: &Connection, mut skills: Vec<SkillDto>) -> CommandResult<Ve
         crate::sync_tools::attach_tool_links(conn, skill)?;
     }
     Ok(skills)
+}
+
+fn replace_skill_tags(conn: &Connection, skill_id: i64, tags: &[String]) -> CommandResult<()> {
+    conn.execute("DELETE FROM skill_tags WHERE skill_id = ?1", params![skill_id])
+        .map_err(|err| err.to_string())?;
+    let normalized = normalize_tags(tags);
+    for tag in normalized {
+        conn.execute(
+            "INSERT OR IGNORE INTO tags (name, created_at, updated_at)
+             VALUES (?1, datetime('now'), datetime('now'))",
+            params![tag],
+        )
+        .map_err(|err| err.to_string())?;
+        let tag_id: i64 = conn
+            .query_row("SELECT id FROM tags WHERE name = ?1", params![tag], |row| row.get(0))
+            .map_err(|err| err.to_string())?;
+        conn.execute(
+            "INSERT OR IGNORE INTO skill_tags (skill_id, tag_id) VALUES (?1, ?2)",
+            params![skill_id, tag_id],
+        )
+        .map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+fn normalize_tags(tags: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for tag in tags {
+        let trimmed = tag.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if normalized.iter().any(|item: &String| item.eq_ignore_ascii_case(trimmed)) {
+            continue;
+        }
+        normalized.push(trimmed.to_string());
+        if normalized.len() >= 12 {
+            break;
+        }
+    }
+    normalized
 }
 
 fn expand_home_string(path: &str) -> String {

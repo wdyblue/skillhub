@@ -32,6 +32,12 @@ export type Category = {
   parent_id: number | null;
 };
 
+export type Tag = {
+  id: number;
+  name: string;
+  skill_count: number;
+};
+
 export type ScanRoot = {
   id: number;
   path: string;
@@ -182,9 +188,19 @@ export type MarketplaceItem = {
   isUpdateAvailable: boolean;
 };
 
+export type CloudSyncConfig = {
+  provider: string;
+  gistId: string;
+  hasToken: boolean;
+  lastSyncedAt: string | null;
+  accountName: string;
+  accountEmail: string;
+};
+
 export type SkillListFilters = {
   query?: string;
   categoryId?: number | null;
+  tag?: string;
   status?: string;
   source?: string;
   scope?: string;
@@ -209,6 +225,10 @@ export function getStats() {
 
 export function listCategories() {
   return tauriInvoke<Category[]>("list_categories");
+}
+
+export function listTags() {
+  return tauriInvoke<Tag[]>("list_tags");
 }
 
 export function createCategory(input: {
@@ -274,6 +294,21 @@ export function updateSkillMeta(
 
 export function updateSkillScope(request: { id: number; scope: string; projectPath?: string }) {
   return tauriInvoke<void>("update_skill_scope", { request });
+}
+
+export function updateSkillTags(request: { skillId: number; tags: string[] }) {
+  return tauriInvoke<void>("update_skill_tags", { request });
+}
+
+export function batchUpdateSkills(request: {
+  skillIds: number[];
+  categoryId?: number | null;
+  status?: string;
+  isCustom?: boolean;
+  scope?: string;
+  projectPath?: string;
+}) {
+  return tauriInvoke<void>("batch_update_skills", { request });
 }
 
 export function incrementUsage(id: number) {
@@ -443,4 +478,20 @@ export function exportSyncPackage(path: string) {
 
 export function importSyncPackage(path: string) {
   return tauriInvoke<void>("import_sync_package", { path });
+}
+
+export function getCloudSyncConfig() {
+  return tauriInvoke<CloudSyncConfig>("get_cloud_sync_config");
+}
+
+export function saveCloudSyncConfig(input: { gistId: string; token?: string }) {
+  return tauriInvoke<CloudSyncConfig>("save_cloud_sync_config", { input });
+}
+
+export function pushSyncPackageToCloud() {
+  return tauriInvoke<string>("push_sync_package_to_cloud");
+}
+
+export function pullSyncPackageFromCloud() {
+  return tauriInvoke<string>("pull_sync_package_from_cloud");
 }

@@ -52,6 +52,24 @@ pub struct AddMarketplaceSourceInput {
     pub url: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudSyncConfigDto {
+    pub provider: String,
+    pub gist_id: String,
+    pub has_token: bool,
+    pub last_synced_at: Option<String>,
+    pub account_name: String,
+    pub account_email: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveCloudSyncConfigInput {
+    pub gist_id: String,
+    pub token: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct MarketplaceFeed {
     skills: Option<Vec<MarketplaceFeedItem>>,
@@ -108,6 +126,30 @@ pub struct SyncPackageTool {
 pub fn list_marketplace_sources(state: State<AppState>) -> CommandResult<Vec<MarketplaceSourceDto>> {
     let conn = state.conn.lock().map_err(|err| err.to_string())?;
     list_sources_from_conn(&conn)
+}
+
+#[tauri::command]
+pub fn get_cloud_sync_config(state: State<AppState>) -> CommandResult<CloudSyncConfigDto> {
+    let conn = state.conn.lock().map_err(|err| err.to_string())?;
+    Ok(cloud_sync_config_from_conn(&conn)?)
+}
+
+#[tauri::command]
+pub fn save_cloud_sync_config(
+    state: State<AppState>,
+    input: SaveCloudSyncConfigInput,
+) -> CommandResult<CloudSyncConfigDto> {
+    let gist_id = input.gist_id.trim();
+    let conn = state.conn.lock().map_err(|err| err.to_string())?;
+    set_setting(&conn, "cloud.provider", "github_gist")?;
+    set_setting(&conn, "cloud.gist_id", gist_id)?;
+    if let Some(token) = input.token {
+        let trimmed = token.trim();
+        if !trimmed.is_empty() && trimmed != "••••••••" {
+            set_setting(&conn, "cloud.token", trimmed)?;
+        }
+    }
+    cloud_sync_config_from_conn(&conn)
 }
 
 #[tauri::command]
@@ -412,39 +454,85 @@ pub fn export_sync_package(state: State<AppState>, path: String) -> CommandResul
 #[tauri::command]
 pub fn import_sync_package(state: State<AppState>, path: String) -> CommandResult<()> {
     let text = fs::read_to_string(expand_home(&path)).map_err(|err| format!("读取同步包失败：{}", err))?;
-    let package: SyncPackage = serde_json::from_str(&text).map_err(|err| format!("同步包格式错误：{}", err))?;
     let conn = state.conn.lock().map_err(|err| err.to_string())?;
-    let repo = primary_repository_path(&conn)?;
-    fs::create_dir_all(&repo).map_err(|err| format!("创建主仓库失败：{}", err))?;
-    for skill in package.skills {
-        if skill.content.trim().is_empty() {
-            continue;
+    import_sync_package_text(&conn, &text)
+}
+
+#[tauri::command]
+pub async fn push_sync_package_to_cloud(state: State<'_, AppState>) -> CommandResult<String> {
+    let (gist_id, token, payload) = {
+        let conn = state.conn.lock().map_err(|err| err.to_string())?;
+        let gist_id = get_setting(&conn, "cloud.gist_id")?.unwrap_or_default();
+        let token = get_setting(&conn, "cloud.token")?.unwrap_or_default();
+        if gist_id.trim().is_empty() {
+            return Err("请先填写 Gist ID。".to_string());
         }
-        let target = unique_child_dir(&repo, &safe_slug(&skill.name));
-        fs::create_dir_all(&target).map_err(|err| format!("创建 Skill 目录失败：{}", err))?;
-        fs::write(target.join("SKILL.md"), skill.content)
-            .map_err(|err| format!("写入 Skill 失败：{}", err))?;
-    }
-    for tool in package.tools.into_iter().filter(|tool| tool.is_custom) {
-        conn.execute(
-            "INSERT INTO tools
-             (tool_name, display_name, skill_dir, detected, enabled, sync_enabled, is_custom, created_at, updated_at)
-             VALUES (?1, ?2, ?3, 0, ?4, ?5, 1, datetime('now'), datetime('now'))
-             ON CONFLICT(tool_name) DO UPDATE SET display_name = excluded.display_name,
-               skill_dir = excluded.skill_dir, enabled = excluded.enabled, sync_enabled = excluded.sync_enabled,
-               is_custom = 1, updated_at = datetime('now')",
-            params![
-                tool.tool_name,
-                tool.display_name,
-                tool.skill_dir,
-                if tool.enabled { 1 } else { 0 },
-                if tool.sync_enabled { 1 } else { 0 }
-            ],
+        if token.trim().is_empty() {
+            return Err("请先填写 GitHub Token。".to_string());
+        }
+        let package = build_sync_package(&conn)?;
+        (
+            gist_id,
+            token,
+            serde_json::to_string_pretty(&package).map_err(|err| err.to_string())?,
         )
-        .map_err(|err| err.to_string())?;
-    }
-    scan_enabled_roots(&conn).map_err(|err| err.to_string())?;
-    Ok(())
+    };
+
+    github_api_client(&token)?
+        .patch(format!("https://api.github.com/gists/{}", gist_id))
+        .json(&serde_json::json!({
+            "description": format!("SkillHub sync package {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")),
+            "files": {
+                "skillhub-sync-package.json": { "content": payload }
+            }
+        }))
+        .send()
+        .await
+        .map_err(|err| format!("上传云同步包失败：{}", err))?
+        .error_for_status()
+        .map_err(|err| format!("GitHub Gist 返回错误：{}", err))?;
+
+    let conn = state.conn.lock().map_err(|err| err.to_string())?;
+    let synced_at = chrono::Utc::now().to_rfc3339();
+    set_setting(&conn, "cloud.last_synced_at", &synced_at)?;
+    Ok(synced_at)
+}
+
+#[tauri::command]
+pub async fn pull_sync_package_from_cloud(state: State<'_, AppState>) -> CommandResult<String> {
+    let (gist_id, token) = {
+        let conn = state.conn.lock().map_err(|err| err.to_string())?;
+        let gist_id = get_setting(&conn, "cloud.gist_id")?.unwrap_or_default();
+        let token = get_setting(&conn, "cloud.token")?.unwrap_or_default();
+        if gist_id.trim().is_empty() {
+            return Err("请先填写 Gist ID。".to_string());
+        }
+        if token.trim().is_empty() {
+            return Err("请先填写 GitHub Token。".to_string());
+        }
+        (gist_id, token)
+    };
+
+    let value = github_api_client(&token)?
+        .get(format!("https://api.github.com/gists/{}", gist_id))
+        .send()
+        .await
+        .map_err(|err| format!("下载云同步包失败：{}", err))?
+        .error_for_status()
+        .map_err(|err| format!("GitHub Gist 返回错误：{}", err))?
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|err| format!("解析 Gist 返回失败：{}", err))?;
+    let text = value
+        .pointer("/files/skillhub-sync-package.json/content")
+        .and_then(|item| item.as_str())
+        .ok_or_else(|| "Gist 中缺少 skillhub-sync-package.json 文件。".to_string())?;
+
+    let conn = state.conn.lock().map_err(|err| err.to_string())?;
+    import_sync_package_text(&conn, text)?;
+    let synced_at = chrono::Utc::now().to_rfc3339();
+    set_setting(&conn, "cloud.last_synced_at", &synced_at)?;
+    Ok(synced_at)
 }
 
 fn parse_feed(text: &str) -> CommandResult<Vec<MarketplaceFeedItem>> {
@@ -474,6 +562,128 @@ fn list_sources_from_conn(conn: &Connection) -> CommandResult<Vec<MarketplaceSou
     .collect::<rusqlite::Result<Vec<_>>>()
     .map_err(|err| err.to_string())?;
     Ok(rows)
+}
+
+fn build_sync_package(conn: &Connection) -> CommandResult<SyncPackage> {
+    let mut skill_stmt = conn
+        .prepare("SELECT name, description, content, status, source, platform, is_custom FROM skills ORDER BY id")
+        .map_err(|err| err.to_string())?;
+    let skills = skill_stmt
+        .query_map([], |row| {
+            Ok(SyncPackageSkill {
+                name: row.get(0)?,
+                description: row.get(1)?,
+                content: row.get(2)?,
+                status: row.get(3)?,
+                source: row.get(4)?,
+                platform: row.get(5)?,
+                is_custom: row.get::<_, i64>(6)? == 1,
+            })
+        })
+        .map_err(|err| err.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|err| err.to_string())?;
+    let mut tool_stmt = conn
+        .prepare("SELECT tool_name, display_name, skill_dir, enabled, sync_enabled, is_custom FROM tools ORDER BY id")
+        .map_err(|err| err.to_string())?;
+    let tools = tool_stmt
+        .query_map([], |row| {
+            Ok(SyncPackageTool {
+                tool_name: row.get(0)?,
+                display_name: row.get(1)?,
+                skill_dir: row.get(2)?,
+                enabled: row.get::<_, i64>(3)? == 1,
+                sync_enabled: row.get::<_, i64>(4)? == 1,
+                is_custom: row.get::<_, i64>(5)? == 1,
+            })
+        })
+        .map_err(|err| err.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|err| err.to_string())?;
+    Ok(SyncPackage {
+        exported_at: chrono::Utc::now().to_rfc3339(),
+        account_name: get_setting(conn, "account.name")?.unwrap_or_default(),
+        account_email: get_setting(conn, "account.email")?.unwrap_or_default(),
+        skills,
+        tools,
+    })
+}
+
+fn import_sync_package_text(conn: &Connection, text: &str) -> CommandResult<()> {
+    let package: SyncPackage =
+        serde_json::from_str(text).map_err(|err| format!("同步包格式错误：{}", err))?;
+    let repo = primary_repository_path(conn)?;
+    fs::create_dir_all(&repo).map_err(|err| format!("创建主仓库失败：{}", err))?;
+    for skill in package.skills {
+        if skill.content.trim().is_empty() {
+            continue;
+        }
+        let target = unique_child_dir(&repo, &safe_slug(&skill.name));
+        fs::create_dir_all(&target).map_err(|err| format!("创建 Skill 目录失败：{}", err))?;
+        fs::write(target.join("SKILL.md"), skill.content)
+            .map_err(|err| format!("写入 Skill 失败：{}", err))?;
+    }
+    for tool in package.tools.into_iter().filter(|tool| tool.is_custom) {
+        conn.execute(
+            "INSERT INTO tools
+             (tool_name, display_name, skill_dir, detected, enabled, sync_enabled, is_custom, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 0, ?4, ?5, 1, datetime('now'), datetime('now'))
+             ON CONFLICT(tool_name) DO UPDATE SET display_name = excluded.display_name,
+               skill_dir = excluded.skill_dir, enabled = excluded.enabled, sync_enabled = excluded.sync_enabled,
+               is_custom = 1, updated_at = datetime('now')",
+            params![
+                tool.tool_name,
+                tool.display_name,
+                tool.skill_dir,
+                if tool.enabled { 1 } else { 0 },
+                if tool.sync_enabled { 1 } else { 0 }
+            ],
+        )
+        .map_err(|err| err.to_string())?;
+    }
+    if !package.account_name.trim().is_empty() {
+        set_setting(conn, "account.logged_in", "1")?;
+        set_setting(conn, "account.name", &package.account_name)?;
+        set_setting(conn, "account.email", &package.account_email)?;
+    }
+    scan_enabled_roots(conn).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn cloud_sync_config_from_conn(conn: &Connection) -> CommandResult<CloudSyncConfigDto> {
+    let token = get_setting(conn, "cloud.token")?.unwrap_or_default();
+    Ok(CloudSyncConfigDto {
+        provider: get_setting(conn, "cloud.provider")?
+            .filter(|item| !item.trim().is_empty())
+            .unwrap_or_else(|| "github_gist".to_string()),
+        gist_id: get_setting(conn, "cloud.gist_id")?.unwrap_or_default(),
+        has_token: !token.trim().is_empty(),
+        last_synced_at: get_setting(conn, "cloud.last_synced_at")?,
+        account_name: get_setting(conn, "account.name")?.unwrap_or_default(),
+        account_email: get_setting(conn, "account.email")?.unwrap_or_default(),
+    })
+}
+
+fn github_api_client(token: &str) -> CommandResult<Client> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        reqwest::header::HeaderValue::from_static("SkillHub/0.1.0"),
+    );
+    headers.insert(
+        reqwest::header::ACCEPT,
+        reqwest::header::HeaderValue::from_static("application/vnd.github+json"),
+    );
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token.trim()))
+            .map_err(|err| err.to_string())?,
+    );
+    Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .default_headers(headers)
+        .build()
+        .map_err(|err| err.to_string())
 }
 
 fn source_by_id(conn: &Connection, id: i64) -> CommandResult<MarketplaceSourceDto> {
@@ -712,6 +922,17 @@ fn get_setting(conn: &Connection, key: &str) -> CommandResult<Option<String>> {
     conn.query_row("SELECT value FROM app_settings WHERE key = ?1", params![key], |row| row.get(0))
         .optional()
         .map_err(|err| err.to_string())
+}
+
+fn set_setting(conn: &Connection, key: &str, value: &str) -> CommandResult<()> {
+    conn.execute(
+        "INSERT INTO app_settings (key, value, updated_at)
+         VALUES (?1, ?2, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+        params![key, value],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 fn unique_child_dir(parent: &Path, slug: &str) -> PathBuf {
