@@ -175,6 +175,10 @@ macOS 通常位于：
 ~/Library/Application Support/com.wdyblue.skillhub/skillhub.sqlite3
 ```
 
+如果你要从当前电脑迁移到另一台 iMac 继续开发，可以直接参考：
+
+- [docs/imac-migration.md](/Users/admin/Documents/skillhub/docs/imac-migration.md)
+
 ## 第一版限制
 
 - 重复检测页目前是占位页，数据库已有 `duplicate_score` 字段和基础重复风险计算。
