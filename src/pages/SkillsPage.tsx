@@ -303,9 +303,9 @@ function SkillCard({
         {skill.duplicate_score > 0 ? <Badge danger>{language === "en" ? "Duplicate risk" : "重复风险"} {skill.duplicate_score}</Badge> : null}
       </div>
 
-      {tools.length > 0 ? (
+      {availableTools(tools).length > 0 ? (
         <div className="mt-4 grid grid-cols-2 gap-1.5 text-xs">
-          {tools.slice(0, 6).map((tool) => {
+          {availableTools(tools).slice(0, 6).map((tool) => {
             const link = skill.tool_links.find((item) => item.tool_name === tool.tool_name);
             return (
               <span key={tool.tool_name} className="rounded-full bg-slate-50 px-2 py-1 text-slate-600">
@@ -444,6 +444,10 @@ const categoryMap: Record<string, string> = {
   系统工具: "System Tools",
   未分类: "Uncategorized"
 };
+
+function availableTools(tools: ToolConfig[]) {
+  return tools.filter((tool) => tool.detected && tool.enabled && tool.sync_enabled);
+}
 
 function Badge({
   children,

@@ -63,6 +63,7 @@ import { CategoryManagementPage } from "../pages/CategoryManagementPage";
 import { DuplicatesPage } from "../pages/DuplicatesPage";
 import { HealthPage } from "../pages/HealthPage";
 import { CustomSkillsPage } from "../pages/CustomSkillsPage";
+import { FavoritesDashboardPage } from "../pages/FavoritesDashboardPage";
 
 type PageKey =
   | "home"
@@ -421,7 +422,9 @@ export default function App() {
                   }
                   void handleFiltersChange({
                     ...filters,
-                    query
+                    query,
+                    onlyArchived: false,
+                    status: undefined
                   });
                 }}
                 className="h-10 w-72 rounded-2xl border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none transition focus:border-brand-500 focus:ring-4 focus:ring-brand-100"
@@ -529,6 +532,8 @@ export default function App() {
               onSelectSkill={setSelectedSkillId}
               onGoRepository={() => setActivePage("repository")}
             />
+          ) : activePage === "favorites" ? (
+            <FavoritesDashboardPage skills={skills} onSelectSkill={setSelectedSkillId} />
           ) : (
             <PlaceholderPage
               title={activeTitle}

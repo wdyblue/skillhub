@@ -63,6 +63,7 @@ export function SkillDetailPage({
   const displaySummary =
     language === "en" ? skill.summary_en || skill.summary_zh || displayDescription : skill.summary_zh || displayDescription;
   const t = detailLabels[language];
+  const usableTools = tools.filter((tool) => tool.detected && tool.enabled && tool.sync_enabled);
 
   useEffect(() => {
     setContentDraft(skill.content);
@@ -210,10 +211,10 @@ export function SkillDetailPage({
             {t.toolSyncTip}
           </p>
           <div className="mt-4 space-y-3">
-            {tools.length === 0 ? (
+            {usableTools.length === 0 ? (
               <p className="text-sm text-slate-500">{t.noTools}</p>
             ) : (
-              tools.map((tool) => {
+              usableTools.map((tool) => {
                 const link = skill.tool_links.find((item) => item.tool_name === tool.tool_name);
                 const enabled = Boolean(link?.enabled);
                 return (

@@ -300,11 +300,23 @@ pub fn list_skills(
     let mut owned_params: Vec<Box<dyn ToSql>> = Vec::new();
 
     if let Some(query) = filters.query.filter(|value| !value.trim().is_empty()) {
-        sql.push_str(" AND (s.name LIKE ? OR s.description LIKE ? OR s.path LIKE ?)");
+        sql.push_str(
+            " AND (
+                s.name LIKE ? OR s.name_zh LIKE ? OR s.name_en LIKE ?
+                OR s.description LIKE ? OR s.description_zh LIKE ? OR s.description_en LIKE ?
+                OR s.summary_zh LIKE ? OR s.summary_en LIKE ?
+                OR s.content LIKE ? OR s.path LIKE ?
+                OR EXISTS (
+                    SELECT 1 FROM skill_tags st
+                    INNER JOIN tags t ON t.id = st.tag_id
+                    WHERE st.skill_id = s.id AND t.name LIKE ?
+                )
+            )",
+        );
         let pattern = format!("%{}%", query.trim());
-        owned_params.push(Box::new(pattern.clone()));
-        owned_params.push(Box::new(pattern.clone()));
-        owned_params.push(Box::new(pattern));
+        for _ in 0..11 {
+            owned_params.push(Box::new(pattern.clone()));
+        }
     }
 
     if let Some(category_id) = filters.category_id {

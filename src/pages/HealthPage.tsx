@@ -15,6 +15,15 @@ export function HealthPage({ skills, onSelectSkill }: Props) {
 
   return (
     <div className="space-y-5">
+      <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+        <h3 className="text-lg font-semibold text-slate-950">技能体检说明</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-500">
+          技能体检关注 skill 内容本身：说明是否完整、评分是否偏低、是否疑似旧版本、是否缺少摘要。
+          同步体检关注文件系统和工具目录：软链接是否缺失、断链、错链、工具目录是否存在。
+          两者问题域不同，建议保留为两个页面。
+        </p>
+      </section>
+
       <section className="grid grid-cols-5 gap-4">
         <Card label="低评分" value={lowScore.length} icon={<Gauge className="h-5 w-5" />} />
         <Card label="建议检查" value={review.length} icon={<AlertTriangle className="h-5 w-5" />} />

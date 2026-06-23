@@ -34,6 +34,7 @@ export function SyncHealthPage({ report, onCheck, onFix }: Props) {
             <h3 className="text-lg font-semibold text-slate-950">同步体检</h3>
             <p className="mt-2 text-sm text-slate-500">
               检查主仓库与各工具目录之间的软链接状态。修复操作只处理软链接。
+              这里不评估 skill 内容质量，内容完整性请看“技能体检”。
             </p>
           </div>
           <div className="flex gap-2">
