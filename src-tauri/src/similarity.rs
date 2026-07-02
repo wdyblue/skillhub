@@ -26,7 +26,9 @@ fn tokenize(input: &str) -> HashSet<String> {
 
 pub fn has_version_noise(name: &str) -> bool {
     let lower = name.to_lowercase();
-    ["v1", "v2", "v3", "new", "final", "backup", "copy", "old", "旧版", "备份", "最终"]
-        .iter()
-        .any(|needle| lower.contains(needle))
+    [
+        "v1", "v2", "v3", "new", "final", "backup", "copy", "old", "旧版", "备份", "最终",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
