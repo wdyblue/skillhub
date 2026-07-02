@@ -275,11 +275,7 @@ pub fn list_scan_roots(state: State<AppState>) -> CommandResult<Vec<ScanRootDto>
 }
 
 #[tauri::command]
-pub fn add_scan_root(
-    state: State<AppState>,
-    path: String,
-    platform: String,
-) -> CommandResult<ScanRootDto> {
+pub fn add_scan_root(state: State<AppState>, path: String, platform: String) -> CommandResult<ScanRootDto> {
     let normalized = expand_home_string(path.trim());
     if normalized.is_empty() {
         return Err("目录不能为空".to_string());
@@ -329,14 +325,13 @@ pub fn toggle_scan_root(state: State<AppState>, id: i64, enabled: bool) -> Comma
 #[tauri::command]
 pub fn scan_all(state: State<AppState>) -> CommandResult<ScanSummary> {
     let conn = state.conn.lock().map_err(|err| err.to_string())?;
-    scan_enabled_roots(&conn).map_err(|err| err.to_string())
+    let summary = scan_enabled_roots(&conn).map_err(|err| err.to_string())?;
+    remove_links_for_quarantined_skills(&conn)?;
+    Ok(summary)
 }
 
 #[tauri::command]
-pub fn list_skills(
-    state: State<AppState>,
-    filters: Option<SkillListFilters>,
-) -> CommandResult<Vec<SkillDto>> {
+pub fn list_skills(state: State<AppState>, filters: Option<SkillListFilters>) -> CommandResult<Vec<SkillDto>> {
     let conn = state.conn.lock().map_err(|err| err.to_string())?;
     let filters = filters.unwrap_or(SkillListFilters {
         query: None,
@@ -432,11 +427,7 @@ pub fn list_skills(
         Some("name") => "s.name",
         _ => "s.updated_at",
     };
-    let sort_order = if filters.sort_order.as_deref() == Some("asc") {
-        "ASC"
-    } else {
-        "DESC"
-    };
+    let sort_order = if filters.sort_order.as_deref() == Some("asc") { "ASC" } else { "DESC" };
     sql.push_str(&format!(" ORDER BY {} {}, s.id DESC LIMIT 500", sort_by, sort_order));
 
     let param_refs = owned_params
@@ -491,6 +482,19 @@ pub fn update_skill_meta(
     is_custom: bool,
 ) -> CommandResult<()> {
     let conn = state.conn.lock().map_err(|err| err.to_string())?;
+    let current_status: String = conn
+        .query_row(
+            "SELECT status FROM skills WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|err| err.to_string())?;
+    if current_status == "已隔离" && status != "已隔离" {
+        return Err("隔离技能必须先移回 store/skills，不能只改数据库状态。".to_string());
+    }
+    if current_status != "已隔离" && status == "已隔离" {
+        return Err("请先把技能目录移入 quarantine，再重新扫描。".to_string());
+    }
     conn.execute(
         "UPDATE skills SET category_id = ?1, status = ?2, is_custom = ?3,
          updated_at = datetime('now') WHERE id = ?4",
@@ -501,10 +505,7 @@ pub fn update_skill_meta(
 }
 
 #[tauri::command]
-pub fn update_skill_scope(
-    state: State<AppState>,
-    request: UpdateSkillScopeRequest,
-) -> CommandResult<()> {
+pub fn update_skill_scope(state: State<AppState>, request: UpdateSkillScopeRequest) -> CommandResult<()> {
     let scope = request.scope.trim().to_lowercase();
     if scope != "global" && scope != "project" {
         return Err("scope 只支持 global 或 project".to_string());
@@ -523,10 +524,7 @@ pub fn update_skill_scope(
 }
 
 #[tauri::command]
-pub fn update_skill_tags(
-    state: State<AppState>,
-    request: UpdateSkillTagsRequest,
-) -> CommandResult<()> {
+pub fn update_skill_tags(state: State<AppState>, request: UpdateSkillTagsRequest) -> CommandResult<()> {
     let conn = state.conn.lock().map_err(|err| err.to_string())?;
     replace_skill_tags(&conn, request.skill_id, &request.tags)?;
     conn.execute(
@@ -538,10 +536,7 @@ pub fn update_skill_tags(
 }
 
 #[tauri::command]
-pub fn batch_update_skills(
-    state: State<AppState>,
-    request: BatchUpdateSkillsRequest,
-) -> CommandResult<()> {
+pub fn batch_update_skills(state: State<AppState>, request: BatchUpdateSkillsRequest) -> CommandResult<()> {
     if request.skill_ids.is_empty() {
         return Ok(());
     }
